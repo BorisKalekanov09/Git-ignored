@@ -19,7 +19,7 @@ export default function HomeLayout() {
           headerTintColor: theme === "dark" ? "white" : "black",
           headerLargeStyle: { backgroundColor: "transparent" },
           headerBlurEffect: isGlassAvailable ? undefined : blurEffect,
-          title: "Home",
+          title: "Overview",
           headerShown: Platform.OS === "ios",
         }}
       />
