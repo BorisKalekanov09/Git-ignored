@@ -4,13 +4,15 @@ import Dashboard from "@/components/Dashboard";
 import React, { useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   
   const handleRobotPress = () => {
-    // TODO: Navigate to robot details or show more info
-    console.log('Robot status clicked');
+    // Navigate to robot.tsx
+    router.push('/robot');
   };
 
   const handleTabChange = (tab: string) => {
