@@ -1,14 +1,16 @@
 import BlurHeader from "@/components/BlurHeader";
 import RobotStatus from "@/components/RobotStatus";
 import React from "react";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { supabase } from "@/lib/supabase";
+import { useCameraPermissions } from "expo-camera";
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   
   const handleRobotPress = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -59,6 +61,26 @@ const HomeScreen = () => {
             startTime="January 8, 2026 14:42"
             onPress={handleRobotPress}
           />
+
+          {/* Add Bot button */}
+          <TouchableOpacity
+            onPress={async () => {
+              if (!cameraPermission?.granted) {
+                const result = await requestCameraPermission();
+                if (!result.granted) return;
+              }
+              router.push('/scanrobot');
+            }}
+            activeOpacity={0.8}
+            style={{
+              backgroundColor: '#EA575F',
+              borderRadius: 26,
+              padding: 18,
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ color: 'white', fontSize: 17, fontWeight: '600' }}>+ Add Bot</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </>
