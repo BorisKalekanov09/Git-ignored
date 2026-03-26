@@ -1,15 +1,61 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { useAnimatedProps } from 'react-native-reanimated';
+import { Svg, Circle } from 'react-native-svg';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
+
+const radius = 11;
+const circumference = 2 * Math.PI * radius;
+
+function CircularProgress({ progress }: { progress: number }) {
+  const strokeDashoffset = circumference - progress * circumference;
+
+  return (
+    <Animated.View
+      style={{
+        width: 26,
+        height: 26,
+        transform: [{ rotate: '-90deg' }],
+      }}
+    >
+      <Svg width="26" height="26" viewBox="0 0 26 26">
+        {/* Background circle */}
+        <Circle
+          cx="13"
+          cy="13"
+          r={radius}
+          stroke="#3A3A3C"
+          strokeWidth="4.5"
+          fill="none"
+        />
+        {/* Progress circle */}
+        <Circle
+          cx="13"
+          cy="13"
+          r={radius}
+          stroke="#EA575F"
+          strokeWidth="4.5"
+          fill="none"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+        />
+      </Svg>
+    </Animated.View>
+  );
+}
 
 interface RobotStatusProps {
   isWorking: boolean;
+  progress?: number; // 0 to 1
   startTime?: string;
   onPress?: () => void;
 }
 
 const RobotStatus: React.FC<RobotStatusProps> = ({ 
-  isWorking = true, 
+  isWorking = true,
+  progress = 0.65,
   startTime = "January 8, 2026 14:42",
   onPress 
 }) => {
@@ -31,35 +77,7 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
       {/* Header */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <Text style={{ color: 'white', fontSize: 20, fontWeight: '600' }}>Robot</Text>
-        {isWorking && (
-          <View style={{
-            width: 32,
-            height: 32,
-            justifyContent: 'center',
-            alignItems: 'center',
-          }}>
-            <LinearGradient
-              colors={['#EA575F', '#EA575F']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 16,
-                justifyContent: 'center',
-                alignItems: 'center',
-                transform: [{ rotate: '45deg' }],
-              }}
-            >
-              <View style={{
-                width: 20,
-                height: 20,
-                borderRadius: 10,
-                backgroundColor: '#141414',
-              }} />
-            </LinearGradient>
-          </View>
-        )}
+        {isWorking && <CircularProgress progress={progress} />}
       </View>
       
       {/* Divider */}

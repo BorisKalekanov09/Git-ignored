@@ -43,20 +43,45 @@ const HangarSettings = () => {
     }
 
     setLoading(true);
-    const { error } = await supabase.from('hangars').insert([{
+    const { data: hangar, error: hError } = await supabase.from('hangars').insert([{
       user_id: user.id,
       shape,
       diameter: shape === 'circle' ? parseFloat(diameter) : null,
       width: shape === 'rectangle' ? parseFloat(width) : null,
       height: shape === 'rectangle' ? parseFloat(height) : null,
-    }]);
-    setLoading(false);
+    }]).select().single();
 
-    if (error) {
-      Alert.alert('Error', error.message);
+    if (hError) {
+      setLoading(false);
+      Alert.alert('Error', hError.message);
       return;
     }
 
+    // --- Generate Cells ---
+    if (shape === 'rectangle' && hangar) {
+      const w = parseFloat(width);
+      const h = parseFloat(height);
+      const cellSize = 0.2; // 20cm cells
+      const cells = [];
+      const cols = Math.ceil(w / cellSize);
+      const rows = Math.ceil(h / cellSize);
+
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          cells.push({
+            hangar_id: hangar.id,
+            index_x: x,
+            index_y: y,
+            status: 'pending'
+          });
+        }
+      }
+      
+      const { error: cError } = await supabase.from('cells').insert(cells);
+      if (cError) console.error("Cell generation error:", cError);
+    }
+
+    setLoading(false);
     router.push('/robot');
   };
 
