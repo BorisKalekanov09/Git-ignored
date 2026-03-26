@@ -23,12 +23,6 @@ export default function HomeLayout() {
           headerShown: Platform.OS === "ios",
         }}
       />
-      <Stack.Screen
-        name="sheet"
-        options={{
-          presentation: "modal",
-        }}
-      />
     </Stack>
   );
 }
