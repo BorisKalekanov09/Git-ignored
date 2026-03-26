@@ -1,9 +1,11 @@
 # Environment Secrets
+**/.env
+**/.env*
 .env
-frontend/.env
-backend/.env
+*/.env
 
 # Arduino Secrets
+**/secrets.h
 Arduino/secrets.h
 
 # Node Dependencies
