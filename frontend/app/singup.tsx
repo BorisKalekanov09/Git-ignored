@@ -7,21 +7,52 @@ import {
   Platform,
   KeyboardAvoidingView,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useAuth } from '@/context/AuthContext';
 
 const SignUpScreen = () => {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { signUp } = useAuth();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
 
-  const handleSignUp = () => {
-    // TODO: implement registration
-    router.back();
+  const handleSignUp = async () => {
+    setError('');
+    setInfo('');
+
+    if (!username || !email || !password || !confirmPassword) {
+      setError('Please fill in all fields.');
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
+    setLoading(true);
+    const { error: signUpError, needsConfirmation } = await signUp(email, username, password);
+    setLoading(false);
+
+    if (signUpError) {
+      setError(signUpError);
+    } else if (needsConfirmation) {
+      setInfo('Check your email for a confirmation link, then log in.');
+    } else {
+      router.replace('/(tabs)/home');
+    }
   };
 
   return (
@@ -126,17 +157,30 @@ const SignUpScreen = () => {
             paddingVertical: 14,
             color: 'white',
             fontSize: 16,
-            marginBottom: 32,
+            marginBottom: 24,
           }}
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
         />
 
+        {/* Error / Info messages */}
+        {error ? (
+          <Text style={{ color: '#EA575F', fontSize: 14, textAlign: 'center', marginBottom: 16 }}>
+            {error}
+          </Text>
+        ) : null}
+        {info ? (
+          <Text style={{ color: '#34C759', fontSize: 14, textAlign: 'center', marginBottom: 16 }}>
+            {info}
+          </Text>
+        ) : null}
+
         {/* Sign Up button */}
         <TouchableOpacity
           onPress={handleSignUp}
           activeOpacity={0.8}
+          disabled={loading}
           style={{
             backgroundColor: '#EA575F',
             borderRadius: 14,
@@ -146,7 +190,11 @@ const SignUpScreen = () => {
             width: '80%',
           }}
         >
-          <Text style={{ color: 'white', fontSize: 17, fontWeight: '600' }}>Sign Up</Text>
+          {loading ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text style={{ color: 'white', fontSize: 17, fontWeight: '600' }}>Sign Up</Text>
+          )}
         </TouchableOpacity>
 
         {/* Login link */}

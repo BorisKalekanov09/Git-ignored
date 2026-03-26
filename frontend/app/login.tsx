@@ -6,19 +6,35 @@ import {
   TouchableOpacity,
   Platform,
   KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useAuth } from '@/context/AuthContext';
 
 const LoginScreen = () => {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [username, setUsername] = useState('');
+  const { signIn } = useAuth();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleLogin = () => {
-    // TODO: implement authentication
-    router.back();
+  const handleLogin = async () => {
+    setError('');
+    if (!email || !password) {
+      setError('Please fill in all fields.');
+      return;
+    }
+    setLoading(true);
+    const { error: signInError } = await signIn(email, password);
+    setLoading(false);
+    if (signInError) {
+      setError(signInError);
+    } else {
+      router.replace('/(tabs)/home');
+    }
   };
 
   return (
@@ -43,12 +59,12 @@ const LoginScreen = () => {
           Login
         </Text>
 
-        {/* Username */}
-        <Text style={{ color: '#8E8E93', fontSize: 15, marginBottom: 8 }}>Username</Text>
+        {/* Email */}
+        <Text style={{ color: '#8E8E93', fontSize: 15, marginBottom: 8 }}>Email</Text>
         <TextInput
-          value={username}
-          onChangeText={setUsername}
-          placeholder="Username"
+          value={email}
+          onChangeText={setEmail}
+          placeholder="Email"
           placeholderTextColor="#3A3A3C"
           style={{
             backgroundColor: '#1C1C1E',
@@ -61,6 +77,7 @@ const LoginScreen = () => {
           }}
           autoCapitalize="none"
           autoCorrect={false}
+          keyboardType="email-address"
         />
 
         {/* Password */}
@@ -77,17 +94,25 @@ const LoginScreen = () => {
             paddingVertical: 14,
             color: 'white',
             fontSize: 16,
-            marginBottom: 32,
+            marginBottom: 24,
           }}
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
         />
 
+        {/* Error message */}
+        {error ? (
+          <Text style={{ color: '#EA575F', fontSize: 14, textAlign: 'center', marginBottom: 16 }}>
+            {error}
+          </Text>
+        ) : null}
+
         {/* Login button */}
         <TouchableOpacity
           onPress={handleLogin}
           activeOpacity={0.8}
+          disabled={loading}
           style={{
             backgroundColor: '#EA575F',
             borderRadius: 14,
@@ -97,23 +122,18 @@ const LoginScreen = () => {
             width: '80%',
           }}
         >
-          <Text style={{ color: 'white', fontSize: 17, fontWeight: '600' }}>Login</Text>
-        </TouchableOpacity>
-
-        {/* Forgot Password */}
-        <TouchableOpacity
-          onPress={() => {}}
-          activeOpacity={0.7}
-          style={{ alignItems: 'center', marginTop: 20 }}
-        >
-          <Text style={{ color: '#8E8E93', fontSize: 15 }}>Forgot Password?</Text>
+          {loading ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text style={{ color: 'white', fontSize: 17, fontWeight: '600' }}>Login</Text>
+          )}
         </TouchableOpacity>
 
         {/* Sign Up link */}
         <TouchableOpacity
           onPress={() => router.push('/singup')}
           activeOpacity={0.7}
-          style={{ alignItems: 'center', marginTop: 12 }}
+          style={{ alignItems: 'center', marginTop: 20 }}
         >
           <Text style={{ color: '#8E8E93', fontSize: 15 }}>
             Don't have an account?{' '}
