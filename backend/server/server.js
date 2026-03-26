@@ -23,6 +23,12 @@ app.use(express.static('public'));
 
 // In-memory state (for realtime UI)
 let latestSensorData = {
+  device_id: "UNKNOWN",
+  temperature: 0,
+  co2: 0,
+  humidity: 0,
+  latitude: 0,
+  longitude: 0,
   roadQuality: 0,
   condition: "UNKNOWN",
   holesCount: 0
@@ -46,6 +52,12 @@ wss.on('connection', (ws, req) => {
       const data = JSON.parse(message);
 
       // Update local state
+      if (data.device_id !== undefined) latestSensorData.device_id = data.device_id;
+      if (data.temperature !== undefined) latestSensorData.temperature = data.temperature;
+      if (data.co2 !== undefined) latestSensorData.co2 = data.co2;
+      if (data.humidity !== undefined) latestSensorData.humidity = data.humidity;
+      if (data.latitude !== undefined) latestSensorData.latitude = data.latitude;
+      if (data.longitude !== undefined) latestSensorData.longitude = data.longitude;
       if (data.roadQuality !== undefined) latestSensorData.roadQuality = data.roadQuality;
       if (data.condition !== undefined) latestSensorData.condition = data.condition;
       if (data.holesCount !== undefined) latestSensorData.holesCount = data.holesCount;
@@ -95,6 +107,12 @@ app.post('/data', async (req, res) => {
     const data = req.body;
 
     // Update local state
+    if (data.device_id !== undefined) latestSensorData.device_id = data.device_id;
+    if (data.temperature !== undefined) latestSensorData.temperature = data.temperature;
+    if (data.co2 !== undefined) latestSensorData.co2 = data.co2;
+    if (data.humidity !== undefined) latestSensorData.humidity = data.humidity;
+    if (data.latitude !== undefined) latestSensorData.latitude = data.latitude;
+    if (data.longitude !== undefined) latestSensorData.longitude = data.longitude;
     if (data.roadQuality !== undefined) latestSensorData.roadQuality = data.roadQuality;
     if (data.condition !== undefined) latestSensorData.condition = data.condition;
     if (data.holesCount !== undefined) latestSensorData.holesCount = data.holesCount;
