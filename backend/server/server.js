@@ -15,6 +15,36 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+/**
+ * Updates cell status based on robot position
+ */
+async function processCellUpdate(data) {
+  try {
+    if (data.latitude === undefined || data.longitude === undefined) return;
+
+    // 20cm cells = 0.2 units
+    const cellSize = 0.2;
+    const cellX = Math.floor(data.longitude / cellSize);
+    const cellY = Math.floor(data.latitude / cellSize);
+
+    // Get the first hangar for now (simplification)
+    const { data: hangar } = await supabase.from('hangars').select('id').limit(1).maybeSingle();
+    
+    if (hangar) {
+      const { error } = await supabase
+        .from('cells')
+        .update({ status: 'completed', last_visited_at: new Date() })
+        .match({ hangar_id: hangar.id, index_x: cellX, index_y: cellY });
+        
+      if (!error) {
+        console.log(`[Cell] Marked cell (${cellX}, ${cellY}) as completed`);
+      }
+    }
+  } catch (err) {
+    console.error("[Cell Error]", err);
+  }
+}
+
 // HTTP + WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, host: '0.0.0.0' });
@@ -90,6 +120,8 @@ wss.on('connection', (ws, req) => {
         console.error("Supabase insert error:", error);
       } else {
         console.log("Data inserted into Supabase");
+        // Process cell updates
+        processCellUpdate(data);
       }
 
       // Broadcast to all clients
@@ -153,6 +185,9 @@ app.post('/data', async (req, res) => {
       console.error("Supabase insert error:", error);
       return res.status(500).json({ error });
     }
+
+    // Process cell updates
+    processCellUpdate(data);
 
     // Broadcast to clients
     broadcastData();

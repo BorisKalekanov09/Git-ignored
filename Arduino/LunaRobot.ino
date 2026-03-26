@@ -120,7 +120,7 @@ void setup() {
   Serial.println("\nWiFi OK");
 
   String url = "/data?token=" + String(AUTH_KEY);
-  ws.beginSSL(serverAddress, serverPort, url.c_str());
+  ws.begin(serverAddress, serverPort, url.c_str());
   ws.onEvent(wsEvent);
   ws.setReconnectInterval(3000);
   xTaskCreatePinnedToCore(wsTask, "ws", 4096, NULL, 1, NULL, 0);
