@@ -11,7 +11,6 @@ const HomeScreen = () => {
   const router = useRouter();
   
   const handleRobotPress = () => {
-    // Navigate to robot.tsx
     router.push('/robot');
   };
 
@@ -35,7 +34,7 @@ const HomeScreen = () => {
           padding: 20,
           paddingTop: Platform.OS === "android" 
             ? 140 // Android with BlurHeader
-            : insets.top -40, // iOS with native header - reduced from 100 to 60
+            : insets.top -40, // iOS with native header - reduced from 100 to -40(up)
           gap: 20, // Consistent spacing between components
         }}>
           <RobotStatus

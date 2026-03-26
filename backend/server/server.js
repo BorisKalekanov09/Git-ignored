@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const express = require('express');
 const http = require('http');
@@ -7,6 +8,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const AUTH_KEY = process.env.ESP32_AUTH_KEY;
 
 // Supabase setup
 const supabase = createClient(
@@ -23,9 +25,13 @@ app.use(express.static('public'));
 
 // In-memory state (for realtime UI)
 let latestSensorData = {
-  roadQuality: 0,
-  condition: "UNKNOWN",
-  holesCount: 0
+  device_id: "UNKNOWN",
+  temperature: 0,
+  co2: 0,
+  humidity: 0,
+  latitude: 0,
+  longitude: 0,
+
 };
 
 
@@ -34,6 +40,16 @@ let latestSensorData = {
 // ===============================
 wss.on('connection', (ws, req) => {
   const clientIP = req.socket.remoteAddress;
+  const urlParams = new URLSearchParams(req.url.split('?')[1]);
+  const token = urlParams.get('token');
+
+  // Verify token
+  if (AUTH_KEY && token !== AUTH_KEY) {
+    console.warn(`[WebSocket] Unauthorized connection attempt from ${clientIP}`);
+    ws.close(1008, "Unauthorized"); // 1008 is Policy Violation
+    return;
+  }
+
   console.log(`[WebSocket] Client connected: ${clientIP}`);
 
   // Send latest data immediately
@@ -46,6 +62,12 @@ wss.on('connection', (ws, req) => {
       const data = JSON.parse(message);
 
       // Update local state
+      if (data.device_id !== undefined) latestSensorData.device_id = data.device_id;
+      if (data.temperature !== undefined) latestSensorData.temperature = data.temperature;
+      if (data.co2 !== undefined) latestSensorData.co2 = data.co2;
+      if (data.humidity !== undefined) latestSensorData.humidity = data.humidity;
+      if (data.latitude !== undefined) latestSensorData.latitude = data.latitude;
+      if (data.longitude !== undefined) latestSensorData.longitude = data.longitude;
       if (data.roadQuality !== undefined) latestSensorData.roadQuality = data.roadQuality;
       if (data.condition !== undefined) latestSensorData.condition = data.condition;
       if (data.holesCount !== undefined) latestSensorData.holesCount = data.holesCount;
@@ -89,12 +111,26 @@ wss.on('connection', (ws, req) => {
 // HTTP POST (ESP32 or other)
 // ===============================
 app.post('/data', async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader ? authHeader.split(' ')[1] : req.query.token;
+
+  if (AUTH_KEY && token !== AUTH_KEY) {
+    console.warn(`[HTTP] Unauthorized POST from ${req.ip}`);
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
   console.log("[HTTP] Received POST data:", req.body);
 
   try {
     const data = req.body;
 
     // Update local state
+    if (data.device_id !== undefined) latestSensorData.device_id = data.device_id;
+    if (data.temperature !== undefined) latestSensorData.temperature = data.temperature;
+    if (data.co2 !== undefined) latestSensorData.co2 = data.co2;
+    if (data.humidity !== undefined) latestSensorData.humidity = data.humidity;
+    if (data.latitude !== undefined) latestSensorData.latitude = data.latitude;
+    if (data.longitude !== undefined) latestSensorData.longitude = data.longitude;
     if (data.roadQuality !== undefined) latestSensorData.roadQuality = data.roadQuality;
     if (data.condition !== undefined) latestSensorData.condition = data.condition;
     if (data.holesCount !== undefined) latestSensorData.holesCount = data.holesCount;
