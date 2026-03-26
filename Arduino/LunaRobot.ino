@@ -11,10 +11,10 @@
 #include <math.h>
 
 // ── Config ───────────────────────────────────────────────────
-const char* ssid          = "Boris's iPhone";
-const char* password      = "123123123";
-const char* serverAddress = "roadquality.onrender.com";
-const int   serverPort    = 443;
+const char* ssid          = "Mino";
+const char* password      = "AGoodPass";
+const char* serverAddress = "10.17.114.173";
+const int   serverPort    = 8080;
 const char* AUTH_KEY      = "4775f0fb31998501257ac92598380e2f";
 const char* DEVICE_ID     = "robot-01";   // <-- change this
 
@@ -22,7 +22,7 @@ const char* DEVICE_ID     = "robot-01";   // <-- change this
 #define IN1 25
 #define IN2 14
 #define ENA 33
-#define IN3 12
+#define IN3 13
 #define IN4 26
 #define ENB 27
 
