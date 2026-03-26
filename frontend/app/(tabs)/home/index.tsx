@@ -1,9 +1,7 @@
 import BlurHeader from "@/components/BlurHeader";
 import RobotStatus from "@/components/RobotStatus";
-import Dashboard from "@/components/Dashboard";
-import React, { useState } from "react";
-import { Alert, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import React from "react";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { supabase } from "@/lib/supabase";
@@ -38,11 +36,6 @@ const HomeScreen = () => {
     }
   };
 
-  const handleTabChange = (tab: string) => {
-    // TODO: Handle tab change logic
-    console.log('Tab changed to:', tab);
-  };
-
   return (
     <>
       {Platform.OS === "android" && <BlurHeader title="Overview" />}
@@ -57,36 +50,15 @@ const HomeScreen = () => {
         <View style={{
           padding: 20,
           paddingTop: Platform.OS === "android" 
-            ? 140 // Android with BlurHeader
-            : insets.top -40, // iOS with native header - reduced from 100 to 60
-          gap: 20, // Consistent spacing between components
+            ? 140
+            : insets.top - 40,
+          gap: 20,
         }}>
           <RobotStatus
             isWorking={true}
             startTime="January 8, 2026 14:42"
             onPress={handleRobotPress}
           />
-          
-          <Dashboard
-            onTabChange={handleTabChange}
-          />
-
-          {/* Login button */}
-          <TouchableOpacity onPress={() => router.push('/login')} activeOpacity={0.8}>
-            <LinearGradient
-              colors={['#4f8ef7', '#6ea8ff']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{
-                backgroundColor: '#141414',
-                borderRadius: 26,
-                padding: 16,
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ color: 'white', fontSize: 17, fontWeight: '600' }}>Go to Login</Text>
-            </LinearGradient>
-          </TouchableOpacity>
         </View>
       </ScrollView>
     </>
