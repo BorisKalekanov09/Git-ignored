@@ -18,12 +18,16 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
   };
 
   return (
-    <View style={{ 
-      backgroundColor: '#141414',
-      borderRadius: 26,
-      padding: 14,
-      gap: 14 
-    }}>
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.8}
+      style={{ 
+        backgroundColor: '#141414',
+        borderRadius: 26,
+        padding: 14,
+        gap: 14 
+      }}
+    >
       {/* Header */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <Text style={{ color: 'white', fontSize: 20, fontWeight: '600' }}>Robot</Text>
@@ -61,8 +65,8 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
       {/* Divider */}
       <View style={{ height: 1, backgroundColor: '#2C2C2E' }} />
       
-      {/* Status Card - Matching party accordion style */}
-      <TouchableOpacity 
+      {/* Status Card */}
+      <View 
         style={{ 
           backgroundColor: '#1C1C1E',
           borderRadius: 20,
@@ -70,19 +74,17 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
           alignItems: 'center',
           justifyContent: 'center'
         }}
-        onPress={onPress}
-        activeOpacity={0.8}
       >
-        <Text style={{ color: isWorking ? '#FFFFFF' : '#8E8E93', fontSize: 17 }}>
+        <Text style={{ color: isWorking ? '#9F9FA1' : '#8E8E93', fontSize: 17 }}>
           {isWorking ? 'Currently in progress...' : 'There is currently no robot activity!'}
         </Text>
-        {isWorking && startTime && (
-          <Text style={{ color: '#8E8E93', fontSize: 15, marginTop: 4 }}>
-            {formatTimestamp(startTime)}
-          </Text>
-        )}
-      </TouchableOpacity>
-    </View>
+      </View>
+      {isWorking && startTime && (
+        <Text style={{ color: '#8E8E93', fontSize: 13, textAlign: 'center' }}>
+          {formatTimestamp(startTime)}
+        </Text>
+      )}
+    </TouchableOpacity>
   );
 };
 
