@@ -5,24 +5,24 @@ import * as Constants from 'expo-constants';
 const getServerIP = () => {
   const envIP = process.env.EXPO_PUBLIC_SERVER_IP?.trim();
   if (envIP && envIP !== 'undefined') return envIP;
-  
+
   try {
     const configIP = (Constants.default?.expoConfig as any)?.extra?.serverIP;
     if (configIP) return configIP;
-  } catch (e) {}
-  
+  } catch (e) { }
+
   return '10.244.103.197'; // fallback
 };
 
 const getAuthKey = () => {
   const envKey = process.env.EXPO_PUBLIC_ESP32_AUTH_KEY?.trim();
   if (envKey && envKey !== 'undefined') return envKey;
-  
+
   try {
     const configKey = (Constants.default?.expoConfig as any)?.extra?.authKey;
     if (configKey) return configKey;
-  } catch (e) {}
-  
+  } catch (e) { }
+
   return null; // No fallback for security
 };
 
