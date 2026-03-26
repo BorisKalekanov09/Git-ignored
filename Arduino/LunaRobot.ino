@@ -15,6 +15,7 @@ const char* ssid          = "Boris's iPhone";
 const char* password      = "123123123";
 const char* serverAddress = "roadquality.onrender.com";
 const int   serverPort    = 443;
+const char* AUTH_KEY      = "4775f0fb31998501257ac92598380e2f";
 const char* DEVICE_ID     = "robot-01";   // <-- change this
 
 // ── L298N Motor Pins ─────────────────────────────────────────
@@ -118,7 +119,8 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   Serial.println("\nWiFi OK");
 
-  ws.beginSSL(serverAddress, serverPort, "/data");
+  String url = "/data?token=" + String(AUTH_KEY);
+  ws.beginSSL(serverAddress, serverPort, url.c_str());
   ws.onEvent(wsEvent);
   ws.setReconnectInterval(3000);
   xTaskCreatePinnedToCore(wsTask, "ws", 4096, NULL, 1, NULL, 0);
@@ -136,13 +138,15 @@ void loop() {
   if (now - telTimer >= 3000) {
     float speed = CM_PER_SECOND * ((abs(currentL) + abs(currentR)) / 2.0f) / BASE_SPEED;
 
-    String msg = "{\"id\":\""    + String(DEVICE_ID)              + "\""
-               + ",\"wp\":"     + String(wpIndex)
-               + ",\"x\":"      + String(posX, 1)
-               + ",\"y\":"      + String(posY, 1)
-               + ",\"temp\":"   + String(dht.readTemperature(), 1)
-               + ",\"hum\":"    + String(dht.readHumidity(), 1)
-               + ",\"speed\":"  + String(speed, 1)
+    String msg = "{\"device_id\":\"" + String(DEVICE_ID)              + "\""
+               + ",\"wp\":"          + String(wpIndex)
+               + ",\"x\":"           + String(posX, 1)
+               + ",\"y\":"           + String(posY, 1)
+               + ",\"temperature\":" + String(dht.readTemperature(), 1)
+               + ",\"humidity\":"    + String(dht.readHumidity(), 1)
+               + ",\"latitude\":"    + String(posY, 4) // mapping Y/X to Lat/Lon for simplicity
+               + ",\"longitude\":"   + String(posX, 4)
+               + ",\"speed\":"       + String(speed, 1)
                + "}";
 
     ws.sendTXT(msg);
