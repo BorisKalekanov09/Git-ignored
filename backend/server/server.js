@@ -29,9 +29,7 @@ let latestSensorData = {
   humidity: 0,
   latitude: 0,
   longitude: 0,
-  roadQuality: 0,
-  condition: "UNKNOWN",
-  holesCount: 0
+
 };
 
 
