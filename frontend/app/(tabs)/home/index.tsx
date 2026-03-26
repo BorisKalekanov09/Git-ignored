@@ -2,18 +2,40 @@ import BlurHeader from "@/components/BlurHeader";
 import RobotStatus from "@/components/RobotStatus";
 import Dashboard from "@/components/Dashboard";
 import React, { useState } from "react";
-import { Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { Alert, Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { supabase } from "@/lib/supabase";
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   
-  const handleRobotPress = () => {
-    // Navigate to robot.tsx
-    router.push('/robot');
+  const handleRobotPress = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      router.push('/login');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('hangars')
+      .select('id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      Alert.alert('Error', error.message);
+      return;
+    }
+
+    if (!data) {
+      router.push('/hangarsettings');
+    } else {
+      router.push('/robot');
+    }
   };
 
   const handleTabChange = (tab: string) => {

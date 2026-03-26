@@ -14,6 +14,10 @@ export default function RootLayout() {
         >
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="index" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="singup" />
+          <Stack.Screen name="hangarsettings" />
+          <Stack.Screen name="robot" />
         </Stack>
       </AuthProvider>
     </GestureHandlerRootView>
