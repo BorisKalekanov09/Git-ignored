@@ -1,16 +1,27 @@
+require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-const PORT = 8080;
+const PORT = process.env.PORT || 8080;
+
+// Supabase setup
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+// HTTP + WebSocket server
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, host: '0.0.0.0' });
 
 app.use(express.json());
-app.use(express.static('public')); 
+app.use(express.static('public'));
 
+// In-memory state (for realtime UI)
 let latestSensorData = {
   roadQuality: 0,
   condition: "UNKNOWN",
@@ -18,61 +29,136 @@ let latestSensorData = {
 };
 
 
+// ===============================
+// WebSocket
+// ===============================
 wss.on('connection', (ws, req) => {
   const clientIP = req.socket.remoteAddress;
   console.log(`[WebSocket] Client connected: ${clientIP}`);
 
+  // Send latest data immediately
   ws.send(JSON.stringify({ type: "sensor_data", data: latestSensorData }));
 
-  ws.on('message', (message) => {
+  ws.on('message', async (message) => {
     console.log(`[WebSocket] Raw message: ${message}`);
 
     try {
       const data = JSON.parse(message);
-      console.log("[Parsed JSON]", data);
 
+      // Update local state
       if (data.roadQuality !== undefined) latestSensorData.roadQuality = data.roadQuality;
       if (data.condition !== undefined) latestSensorData.condition = data.condition;
       if (data.holesCount !== undefined) latestSensorData.holesCount = data.holesCount;
 
-      wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({ type: "sensor_data", data: latestSensorData }));
-        }
-      });
+      // Insert into Supabase
+      const { error } = await supabase
+        .from('sensor_data')
+        .insert([
+          {
+            device_id: data.device_id || 'esp32_car_1',
+            temperature: data.temperature ?? null,
+            co2: data.co2 ?? null,
+            humidity: data.humidity ?? null,
+            latitude: data.latitude ?? null,
+            longitude: data.longitude ?? null,
+            speed: data.speed ?? null,
+          }
+        ]);
+
+      if (error) {
+        console.error("Supabase insert error:", error);
+      } else {
+        console.log("Data inserted into Supabase");
+      }
+
+      // Broadcast to all clients
+      broadcastData();
 
     } catch (err) {
-      console.error("[Error] Failed to parse incoming message:", err);
+      console.error("[Error] Failed to parse WebSocket message:", err);
     }
   });
 
-  ws.on('close', () => console.log(`[WebSocket] Client disconnected: ${clientIP}`));
+  ws.on('close', () => {
+    console.log(`[WebSocket] Client disconnected: ${clientIP}`);
+  });
 });
 
 
-app.post('/data', (req, res) => {
+// ===============================
+// HTTP POST (ESP32 or other)
+// ===============================
+app.post('/data', async (req, res) => {
   console.log("[HTTP] Received POST data:", req.body);
 
-  if (req.body.roadQuality !== undefined) latestSensorData.roadQuality = req.body.roadQuality;
-  if (req.body.condition !== undefined) latestSensorData.condition = req.body.condition;
-  if (req.body.holesCount !== undefined) latestSensorData.holesCount = req.body.holesCount;
+  try {
+    const data = req.body;
 
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: "sensor_data", data: latestSensorData }));
+    // Update local state
+    if (data.roadQuality !== undefined) latestSensorData.roadQuality = data.roadQuality;
+    if (data.condition !== undefined) latestSensorData.condition = data.condition;
+    if (data.holesCount !== undefined) latestSensorData.holesCount = data.holesCount;
+
+    // Insert into Supabase
+    const { error } = await supabase
+      .from('sensor_data')
+      .insert([
+        {
+          device_id: data.device_id || 'esp32_car_1',
+          temperature: data.temperature ?? null,
+          co2: data.co2 ?? null,
+          humidity: data.humidity ?? null,
+          latitude: data.latitude ?? null,
+          longitude: data.longitude ?? null,
+          speed: data.speed ?? null,
+        }
+      ]);
+
+    if (error) {
+      console.error("Supabase insert error:", error);
+      return res.status(500).json({ error });
     }
-  });
 
-  res.json({ status: 'success', received: latestSensorData });
+    // Broadcast to clients
+    broadcastData();
+
+    res.json({ status: 'saved to supabase', received: latestSensorData });
+
+  } catch (err) {
+    console.error("[HTTP ERROR]", err);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
+
+// ===============================
+// GET latest data
+// ===============================
 app.get('/data', (req, res) => {
   console.log("[HTTP] GET /data requested");
   res.json(latestSensorData);
 });
 
 
+// ===============================
+// Broadcast helper
+// ===============================
+function broadcastData() {
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({
+        type: "sensor_data",
+        data: latestSensorData
+      }));
+    }
+  });
+}
+
+
+// ===============================
+// Start server
+// ===============================
 server.listen(PORT, () => {
-  console.log(` Server running at: http://localhost:${PORT}`);
-  console.log(" WebSocket listening on the same port");
+  console.log(`Server running at: http://localhost:${PORT}`);
+  console.log("WebSocket running on same port");
 });
