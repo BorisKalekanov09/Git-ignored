@@ -13,7 +13,7 @@ const HomeScreen = () => {
   const handleRobotPress = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      router.push('/login');
+      router.push('../login');
       return;
     }
 
@@ -30,7 +30,7 @@ const HomeScreen = () => {
     }
 
     if (!data) {
-      router.push('/hangarsettings');
+      router.push('../hangarsettings');
     } else {
       router.push('/robot');
     }
