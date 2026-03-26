@@ -1,25 +1,54 @@
 import BlurHeader from "@/components/BlurHeader";
-import React from "react";
-import { Platform, ScrollView, StyleSheet } from "react-native";
+import RobotStatus from "@/components/RobotStatus";
+import Dashboard from "@/components/Dashboard";
+import React, { useState } from "react";
+import { Platform, ScrollView, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const HomeScreen = () => {
+  const insets = useSafeAreaInsets();
+  
+  const handleRobotPress = () => {
+    // TODO: Navigate to robot details or show more info
+    console.log('Robot status clicked');
+  };
+
+  const handleTabChange = (tab: string) => {
+    // TODO: Handle tab change logic
+    console.log('Tab changed to:', tab);
+  };
+
   return (
     <>
-      {Platform.OS === "android" && <BlurHeader title="Home" />}
+      {Platform.OS === "android" && <BlurHeader title="Overview" />}
       <ScrollView
-        style={styles.container}
+        style={{
+          flex: 1,
+          backgroundColor: "#000",
+        }}
         contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
       >
+        <View style={{
+          padding: 20,
+          paddingTop: Platform.OS === "android" 
+            ? 140 // Android with BlurHeader
+            : insets.top -40, // iOS with native header - reduced from 100 to 60
+          gap: 20, // Consistent spacing between components
+        }}>
+          <RobotStatus
+            isWorking={true}
+            startTime="January 8, 2026 14:42"
+            onPress={handleRobotPress}
+          />
+          
+          <Dashboard
+            onTabChange={handleTabChange}
+          />
+        </View>
       </ScrollView>
     </>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
-});
 
 export default HomeScreen;
