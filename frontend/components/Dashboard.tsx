@@ -20,9 +20,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onTabChange }) => {
   return (
     <View style={{ 
       backgroundColor: '#141414',
-      borderRadius: 20,
-      padding: 20,
-      gap: 16 
+      borderRadius: 26,
+      padding:14,
+      gap: 14 
     }}>
       {/* Header */}
       <Text style={{ color: 'white', fontSize: 20, fontWeight: '600' }}>Dashboard</Text>

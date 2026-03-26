@@ -20,9 +20,9 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
   return (
     <View style={{ 
       backgroundColor: '#141414',
-      borderRadius: 20,
-      padding: 20,
-      gap: 16 
+      borderRadius: 26,
+      padding: 14,
+      gap: 14 
     }}>
       {/* Header */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -35,7 +35,7 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
             alignItems: 'center',
           }}>
             <LinearGradient
-              colors={['#ff6b6b', '#ff8e8e']}
+              colors={['#EA575F', '#EA575F']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={{

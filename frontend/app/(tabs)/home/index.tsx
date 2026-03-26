@@ -2,7 +2,8 @@ import BlurHeader from "@/components/BlurHeader";
 import RobotStatus from "@/components/RobotStatus";
 import Dashboard from "@/components/Dashboard";
 import React, { useState } from "react";
-import { Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 
@@ -47,6 +48,23 @@ const HomeScreen = () => {
           <Dashboard
             onTabChange={handleTabChange}
           />
+
+          {/* Login button */}
+          <TouchableOpacity onPress={() => router.push('/login')} activeOpacity={0.8}>
+            <LinearGradient
+              colors={['#4f8ef7', '#6ea8ff']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{
+                backgroundColor: '#141414',
+                borderRadius: 26,
+                padding: 16,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: 'white', fontSize: 17, fontWeight: '600' }}>Go to Login</Text>
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </>
