@@ -44,10 +44,7 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    },
-    "extra": {
-      "serverIP": "10.244.103.197",
-      "authKey": "4775f0fb31998501257ac92598380e2f"
     }
   }
 }
+

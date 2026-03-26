@@ -23,7 +23,7 @@ const getAuthKey = () => {
     if (configKey) return configKey;
   } catch (e) {}
   
-  return '4775f0fb31998501257ac92598380e2f'; // fallback
+  return null; // No fallback for security
 };
 
 const IP = getServerIP();

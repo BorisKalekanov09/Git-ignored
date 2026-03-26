@@ -8,14 +8,14 @@
 #include <DHT.h>
 #include <WiFi.h>
 #include <WebSocketsClient.h>
-#include <math.h>
+#include "secrets.h"
 
 // ── Config ───────────────────────────────────────────────────
-const char* ssid          = "A1_F382";
-const char* password      = "Kek4Thx7";
+const char* ssid          = WIFI_SSID;
+const char* password      = WIFI_PASS;
 const char* serverAddress = "10.17.114.173";
 const int   serverPort    = 8080;
-const char* AUTH_KEY      = "4775f0fb31998501257ac92598380e2f";
+const char* AUTH_KEY      = AUTH_KEY_VAL;
 const char* DEVICE_ID     = "robot-01";
 
 // ── L298N Motor Pins ─────────────────────────────────────────
