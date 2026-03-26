@@ -18,6 +18,7 @@ export default function RootLayout() {
           <Stack.Screen name="singup" />
           <Stack.Screen name="hangarsettings" />
           <Stack.Screen name="robot" />
+          <Stack.Screen name="scanrobot" />
         </Stack>
       </AuthProvider>
     </GestureHandlerRootView>
