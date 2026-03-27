@@ -39,6 +39,8 @@ console.log("🌐 WebSocket - IP:", IP, "Auth Key present:", !!KEY);
 
 let socket: WebSocket | null = null;
 let listeners: ((data: any) => void)[] = [];
+let retryDelay = 3000;
+const MAX_RETRY_DELAY = 30000;
 
 export const siloSocket = {
   connect: () => {
@@ -58,13 +60,16 @@ export const siloSocket = {
 
     socket = new WebSocket(SERVER_URL);
 
-    socket.onopen = () => console.log("🚀 Connected to:", SERVER_URL);
+    socket.onopen = () => {
+      console.log("🚀 Connected to:", SERVER_URL);
+      retryDelay = 3000; // reset backoff on successful connection
+    };
 
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
         // Forward all relevant message types to listeners
-        const forwarded = new Set(["sensor_data", "cell_updated", "mission_complete", "mission_error", "goto"]);
+        const forwarded = new Set(["sensor_data", "cell_updated", "mission_complete", "mission_error", "goto", "mission_status"]);
         if (forwarded.has(message.type)) {
           listeners.forEach((callback) => callback(message.data ?? message));
         }
@@ -73,11 +78,13 @@ export const siloSocket = {
       }
     };
 
-    socket.onerror = (e) => console.error("WS Error:", e);
+    socket.onerror = () => console.warn(`WS: could not connect to ${SERVER_URL} — retrying in ${retryDelay / 1000}s`);
 
     socket.onclose = () => {
       socket = null;
-      setTimeout(() => siloSocket.connect(), 3000);
+      listeners = []; // clear stale listeners; components re-register via useEffect
+      setTimeout(() => siloSocket.connect(), retryDelay);
+      retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
     };
   },
 

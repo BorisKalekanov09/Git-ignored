@@ -28,12 +28,17 @@ const LoginScreen = () => {
       return;
     }
     setLoading(true);
-    const { error: signInError } = await signIn(email, password);
-    setLoading(false);
-    if (signInError) {
-      setError(signInError);
-    } else {
-      router.replace('/(tabs)/home');
+    try {
+      const { error: signInError } = await signIn(email, password);
+      if (signInError) {
+        setError(signInError);
+      } else {
+        router.replace('/(tabs)/home');
+      }
+    } catch {
+      setError('Network error. Please check your connection.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -131,7 +136,7 @@ const LoginScreen = () => {
 
         {/* Sign Up link */}
         <TouchableOpacity
-          onPress={() => router.push('/singup')}
+          onPress={() => router.push('/signup')}
           activeOpacity={0.7}
           style={{ alignItems: 'center', marginTop: 20 }}
         >

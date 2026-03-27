@@ -1,6 +1,15 @@
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
+// Validate required environment variables early
+const REQUIRED_ENV = ['SUPABASE_URL', 'ESP32_AUTH_KEY'];
+const missing = REQUIRED_ENV.filter(k => !process.env[k]);
+if (missing.length) {
+  console.error(`[Startup] ❌ Missing required env vars: ${missing.join(', ')}`);
+  console.error('[Startup]    Create a .env file in the backend directory. See .env.example');
+  process.exit(1);
+}
+
 // This looks in the CURRENT folder, then the parent folder for a .env
 require('dotenv').config({ path: path.resolve(__dirname, '.env') }); 
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') }); 

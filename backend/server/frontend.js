@@ -262,6 +262,7 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     mission.cells   = [];
     mission.idx     = 0;
     broadcastData({ type: 'command', action: 'recall' });
+    broadcastData({ type: 'mission_status', status: 'stopped', reason: 'recalled' });
     // Send robot back to starting position
     if (mission.startX !== undefined && mission.startY !== undefined) {
       console.log(`[Mission] Sending robot home: x_cm=${mission.startX} y_cm=${mission.startY}`);

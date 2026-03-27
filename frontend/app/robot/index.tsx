@@ -47,6 +47,7 @@ type Cell = {
 type Hangar = { id: string; shape?: 'circle' | 'rectangle'; width: number; height: number; diameter?: number; starting_cell_id?: string | null };
 const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2;
+let _pointCounter = 0; // monotonic ID — avoids Date.now() collisions
 
 function toSurfacePoints(records: SensorRecord[]): HeatPoint[] {
   return records.map((r) => ({
@@ -87,6 +88,7 @@ export default function RobotScreen() {
   const [resizeVisible, setResizeVisible] = useState(false);
   const [newWidth, setNewWidth] = useState('');
   const [newHeight, setNewHeight] = useState('');
+  const [newDiameter, setNewDiameter] = useState('');
 
   // Compute averages from visited cells (avg_* fields set by server after each cell_complete)
   const avgTemp = useMemo(() => {
@@ -205,11 +207,7 @@ export default function RobotScreen() {
     };
 
     loadLatestFromDb();
-    const id = setInterval(loadLatestFromDb, 5000);
-    return () => {
-      mounted = false;
-      clearInterval(id);
-    };
+    return () => { mounted = false; };
   }, []);
 
   // WebSocket stream
@@ -221,7 +219,7 @@ export default function RobotScreen() {
       if (data.type === 'sensor_data' || data.temperature !== undefined) {
         const livePoint = toSurfacePoints([
           {
-            id: Date.now(),
+            id: _pointCounter++,
             temperature: Number(data.temperature ?? data.temp) || 0,
             humidity: Number(data.humidity ?? data.moisture) || 0,
             latitude: Number(data.latitude ?? data.y) || 0,
@@ -254,6 +252,13 @@ export default function RobotScreen() {
             .update({ status: 'completed', ended_at: new Date().toISOString() })
             .eq('id', deploymentIdRef.current);
         }
+        setIsDeployed(false);
+        setDeploymentId(null);
+        deploymentIdRef.current = null;
+      }
+
+      // Backend confirmation that recall was processed
+      if (data.type === 'mission_status' && data.status === 'stopped') {
         setIsDeployed(false);
         setDeploymentId(null);
         deploymentIdRef.current = null;
@@ -300,25 +305,45 @@ export default function RobotScreen() {
     Alert.alert('Recalled', 'Robot has been recalled.');
   };
 
-  const handleResize = async (widthStr = newWidth, heightStr = newHeight) => {
-    const w = parseFloat(widthStr);
-    const h = parseFloat(heightStr);
-    if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
-      Alert.alert('Invalid dimensions', 'Enter valid width and height in metres.');
-      return;
-    }
+  const handleResize = async (dimA = newWidth, dimB = newHeight, diamStr = newDiameter) => {
     if (!hangar) return;
-    await supabase.from('hangars').update({ width: w, height: h }).eq('id', hangar.id);
-    await supabase.from('cells').delete().eq('hangar_id', hangar.id);
     const cellSize = 0.2;
-    const cols = Math.ceil(w / cellSize);
-    const rows = Math.ceil(h / cellSize);
     const newCells: any[] = [];
-    for (let iy = 0; iy < rows; iy++)
-      for (let ix = 0; ix < cols; ix++)
-        newCells.push({ hangar_id: hangar.id, index_x: ix, index_y: iy, status: 'pending' });
-    await supabase.from('cells').insert(newCells);
-    setHangar(prev => prev ? { ...prev, width: w, height: h } : prev);
+
+    if (hangar.shape === 'circle') {
+      const d = parseFloat(diamStr);
+      if (isNaN(d) || d <= 0) {
+        Alert.alert('Invalid dimension', 'Enter a valid diameter in metres.');
+        return;
+      }
+      await supabase.from('hangars').update({ diameter: d }).eq('id', hangar.id);
+      await supabase.from('cells').delete().eq('hangar_id', hangar.id);
+      const n = Math.ceil(d / cellSize);
+      for (let iy = 0; iy < n; iy++)
+        for (let ix = 0; ix < n; ix++)
+          newCells.push({ hangar_id: hangar.id, index_x: ix, index_y: iy, status: 'pending' });
+      const { error: insErr1 } = await supabase.from('cells').insert(newCells);
+      if (insErr1) { Alert.alert('Error', 'Failed to regenerate grid.'); setResizeVisible(false); return; }
+      setHangar(prev => prev ? { ...prev, diameter: d } : prev);
+    } else {
+      const w = parseFloat(dimA);
+      const h = parseFloat(dimB);
+      if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
+        Alert.alert('Invalid dimensions', 'Enter valid width and height in metres.');
+        return;
+      }
+      await supabase.from('hangars').update({ width: w, height: h }).eq('id', hangar.id);
+      await supabase.from('cells').delete().eq('hangar_id', hangar.id);
+      const cols = Math.ceil(w / cellSize);
+      const rows = Math.ceil(h / cellSize);
+      for (let iy = 0; iy < rows; iy++)
+        for (let ix = 0; ix < cols; ix++)
+          newCells.push({ hangar_id: hangar.id, index_x: ix, index_y: iy, status: 'pending' });
+      const { error: insErr2 } = await supabase.from('cells').insert(newCells);
+      if (insErr2) { Alert.alert('Error', 'Failed to regenerate grid.'); setResizeVisible(false); return; }
+      setHangar(prev => prev ? { ...prev, width: w, height: h } : prev);
+    }
+
     const { data: cData } = await supabase.from('cells').select('*').eq('hangar_id', hangar.id)
       .order('index_y', { ascending: true }).order('index_x', { ascending: true });
     if (cData) setCells(cData);
@@ -326,38 +351,58 @@ export default function RobotScreen() {
   };
 
   const promptResize = () => {
-    if (Platform.OS === 'ios') {
-      Alert.prompt(
-        'Resize Hangar',
-        'Enter new width in metres',
-        (widthStr) => {
-          if (!widthStr) return;
-          Alert.prompt(
-            'Resize Hangar',
-            'Enter new height in metres',
-            (heightStr) => { if (heightStr) handleResize(widthStr, heightStr); },
-            'plain-text',
-            hangar ? String(hangar.height ?? '') : '',
-            'decimal-pad',
-          );
-        },
-        'plain-text',
-        hangar ? String(hangar.width ?? '') : '',
-        'decimal-pad',
-      );
+    if (hangar?.shape === 'circle') {
+      if (Platform.OS === 'ios') {
+        Alert.prompt(
+          'Resize Silo',
+          'Enter new diameter in metres',
+          (diamStr) => { if (diamStr) handleResize('', '', diamStr); },
+          'plain-text',
+          hangar ? String(hangar.diameter ?? '') : '',
+          'decimal-pad',
+        );
+      } else {
+        setNewDiameter(hangar ? String(hangar.diameter ?? '') : '');
+        setResizeVisible(true);
+      }
     } else {
-      setNewWidth(hangar ? String(hangar.width ?? '') : '');
-      setNewHeight(hangar ? String(hangar.height ?? '') : '');
-      setResizeVisible(true);
+      if (Platform.OS === 'ios') {
+        Alert.prompt(
+          'Resize Hangar',
+          'Enter new width in metres',
+          (widthStr) => {
+            if (!widthStr) return;
+            Alert.prompt(
+              'Resize Hangar',
+              'Enter new height in metres',
+              (heightStr) => { if (heightStr) handleResize(widthStr, heightStr); },
+              'plain-text',
+              hangar ? String(hangar.height ?? '') : '',
+              'decimal-pad',
+            );
+          },
+          'plain-text',
+          hangar ? String(hangar.width ?? '') : '',
+          'decimal-pad',
+        );
+      } else {
+        setNewWidth(hangar ? String(hangar.width ?? '') : '');
+        setNewHeight(hangar ? String(hangar.height ?? '') : '');
+        setResizeVisible(true);
+      }
     }
   };
 
   const saveStartingPosition = async (raw: string) => {
     const parts = raw.split(',').map((s) => s.trim());
+    if (parts.length !== 2) {
+      Alert.alert('Invalid format', 'Enter position as "x,y" e.g. 3,5');
+      return;
+    }
     const x = parseInt(parts[0], 10);
     const y = parseInt(parts[1], 10);
-    if (isNaN(x) || isNaN(y)) {
-      Alert.alert('Invalid input', 'Enter coordinates as "x,y" e.g. 3,5');
+    if (isNaN(x) || isNaN(y) || x < 0 || y < 0) {
+      Alert.alert('Invalid input', 'x and y must be non-negative integers.');
       return;
     }
     const cell = cells.find((c) => c.index_x === x && c.index_y === y);
@@ -450,24 +495,37 @@ export default function RobotScreen() {
         <Pressable style={styles.modalOverlay} onPress={() => setResizeVisible(false)}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
             <Pressable style={styles.modalCard} onPress={() => {}}>
-              <Text style={styles.modalTitle}>Resize Hangar</Text>
+              <Text style={styles.modalTitle}>Resize {hangar?.shape === 'circle' ? 'Silo' : 'Hangar'}</Text>
               <Text style={styles.modalSubtitle}>New dimensions in metres. Grid will be regenerated.</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={newWidth}
-                onChangeText={setNewWidth}
-                keyboardType="decimal-pad"
-                placeholder="Width (m)"
-                placeholderTextColor="#555"
-              />
-              <TextInput
-                style={[styles.modalInput, { marginTop: 10 }]}
-                value={newHeight}
-                onChangeText={setNewHeight}
-                keyboardType="decimal-pad"
-                placeholder="Height (m)"
-                placeholderTextColor="#555"
-              />
+              {hangar?.shape === 'circle' ? (
+                <TextInput
+                  style={styles.modalInput}
+                  value={newDiameter}
+                  onChangeText={setNewDiameter}
+                  keyboardType="decimal-pad"
+                  placeholder="Diameter (m)"
+                  placeholderTextColor="#555"
+                />
+              ) : (
+                <>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={newWidth}
+                    onChangeText={setNewWidth}
+                    keyboardType="decimal-pad"
+                    placeholder="Width (m)"
+                    placeholderTextColor="#555"
+                  />
+                  <TextInput
+                    style={[styles.modalInput, { marginTop: 10 }]}
+                    value={newHeight}
+                    onChangeText={setNewHeight}
+                    keyboardType="decimal-pad"
+                    placeholder="Height (m)"
+                    placeholderTextColor="#555"
+                  />
+                </>
+              )}
               <View style={styles.modalBtns}>
                 <Pressable style={styles.modalCancel} onPress={() => setResizeVisible(false)}>
                   <Text style={styles.modalCancelText}>Cancel</Text>
@@ -513,11 +571,12 @@ export default function RobotScreen() {
             )}
           </View>
 
-          {/* Resize Hangar button */}
+          {/* Resize Hangar button — locked during deployment */}
           {hangar && (
             <TouchableOpacity
-              style={styles.resizeBtn}
-              onPress={promptResize}
+              style={[styles.resizeBtn, isDeployed && { opacity: 0.4 }]}
+              onPress={isDeployed ? undefined : promptResize}
+              disabled={isDeployed}
             >
               <Text style={styles.resizeBtnText}>⤡  Resize Hangar</Text>
             </TouchableOpacity>

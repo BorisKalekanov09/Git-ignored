@@ -25,18 +25,34 @@ const HangarSettings = () => {
   const [height, setHeight] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleAdd = async () => {
-    // Validate inputs
-    if (shape === 'circle' && !diameter.trim()) {
-      Alert.alert('Missing field', 'Please enter a diameter.');
-      return;
+  const validateDimension = (val: string, name: string): number | null => {
+    const n = parseFloat(val);
+    if (isNaN(n) || n <= 0) {
+      Alert.alert('Invalid input', `${name} must be a positive number.`);
+      return null;
     }
-    if (shape === 'rectangle' && (!width.trim() || !height.trim())) {
-      Alert.alert('Missing fields', 'Please enter both width and height.');
-      return;
+    return n;
+  };
+
+  const handleAdd = async () => {
+    if (shape === 'circle') {
+      if (!diameter.trim()) { Alert.alert('Missing field', 'Please enter a diameter.'); return; }
+      if (validateDimension(diameter, 'Diameter') === null) return;
+    }
+    if (shape === 'rectangle') {
+      if (!width.trim() || !height.trim()) { Alert.alert('Missing fields', 'Please enter both width and height.'); return; }
+      if (validateDimension(width, 'Width') === null) return;
+      if (validateDimension(height, 'Height') === null) return;
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
+    let user;
+    try {
+      const { data: { user: u } } = await supabase.auth.getUser();
+      user = u;
+    } catch {
+      Alert.alert('Network error', 'Could not reach the server. Check your connection.');
+      return;
+    }
     if (!user) {
       Alert.alert('Not logged in', 'You must be logged in to add a hangar.');
       return;
@@ -57,28 +73,31 @@ const HangarSettings = () => {
       return;
     }
 
-    // --- Generate Cells ---
-    if (shape === 'rectangle' && hangar) {
-      const w = parseFloat(width);
-      const h = parseFloat(height);
-      const cellSize = 0.2; // 20cm cells
-      const cells = [];
-      const cols = Math.ceil(w / cellSize);
-      const rows = Math.ceil(h / cellSize);
+    // --- Generate Cells (both shapes) ---
+    if (hangar) {
+      const cellSize = 0.2; // 20 cm per cell
+      const cells: { hangar_id: string; index_x: number; index_y: number; status: string }[] = [];
 
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          cells.push({
-            hangar_id: hangar.id,
-            index_x: x,
-            index_y: y,
-            status: 'pending'
-          });
-        }
+      if (shape === 'circle') {
+        const n = Math.ceil(parseFloat(diameter) / cellSize);
+        for (let y = 0; y < n; y++)
+          for (let x = 0; x < n; x++)
+            cells.push({ hangar_id: hangar.id, index_x: x, index_y: y, status: 'pending' });
+      } else {
+        const cols = Math.ceil(parseFloat(width)  / cellSize);
+        const rows = Math.ceil(parseFloat(height) / cellSize);
+        for (let y = 0; y < rows; y++)
+          for (let x = 0; x < cols; x++)
+            cells.push({ hangar_id: hangar.id, index_x: x, index_y: y, status: 'pending' });
       }
-      
+
       const { error: cError } = await supabase.from('cells').insert(cells);
-      if (cError) console.error("Cell generation error:", cError);
+      if (cError) {
+        Alert.alert('Error', 'Failed to generate grid. Please try again.');
+        console.error('Cell generation error:', cError);
+        setLoading(false);
+        return;
+      }
     }
 
     setLoading(false);

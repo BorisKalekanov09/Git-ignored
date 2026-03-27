@@ -7,7 +7,6 @@ import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 // Suppress THREE.Clock deprecation: patch before r3f uses it
 if (typeof (THREE as any).Clock !== 'undefined') {
   const _Clock = (THREE as any).Clock;
-  // Only patch if THREE.Timer exists (THREE >= 0.165)
   if (typeof (THREE as any).Timer !== 'undefined' && !(_Clock as any).__patched) {
     const _origWarn = console.warn;
     console.warn = (...args: any[]) => {
@@ -19,57 +18,81 @@ if (typeof (THREE as any).Clock !== 'undefined') {
 }
 
 type HeatPoint = { x: number; y: number; z: number; temp: number };
-type Cell = { id: string; index_x: number; index_y: number; status: string };
+type Cell = {
+  id: string;
+  hangar_id?: string;
+  index_x: number;
+  index_y: number;
+  status: string;
+  last_visited_at?: string | null;
+  avg_temp?: number;
+  avg_humidity?: number;
+  avg_air_quality?: number;
+};
 
 const SCALE = 2;
 const CELL_M = 0.2;
-const CELL_W = CELL_M * SCALE; // 0.4 world units per cell
-const GAP = 0.035;
+const CELL_W = CELL_M * SCALE;
 
-// ── Helpers ─────────────────────────────────────────────────
-
-function cellColor(status: string, isStart: boolean) {
-  if (isStart) return '#EA575F';
-  switch (status) {
-    case 'completed': return '#EA575F';
-    case 'active':    return '#00D5FF';
-    default:          return '#1A0A0B';
+/**
+ * A single coloured tile on the top face of the silo.
+ * `side` is the full diameter in world units — used to centre the grid.
+ */
+function CellTile({
+  cell, side, isStart,
+}: {
+  cell: Cell; side: number; isStart: boolean;
+}) {
+  // Derive effective status from sensor averages if available, else use DB status
+  let effectiveStatus = cell.status;
+  if (cell.status !== 'pending' && cell.status !== 'active') {
+    const t  = cell.avg_temp;
+    const h  = cell.avg_humidity;
+    const aq = cell.avg_air_quality;
+    if (
+      (t  !== undefined && t  > 35)   ||
+      (h  !== undefined && h  > 85)   ||
+      (aq !== undefined && aq > 3000)
+    ) {
+      effectiveStatus = 'danger';
+    } else if (
+      (t  !== undefined && t  > 28)   ||
+      (h  !== undefined && h  > 70)   ||
+      (aq !== undefined && aq > 2000)
+    ) {
+      effectiveStatus = 'warning';
+    } else if (cell.status !== 'pending') {
+      effectiveStatus = 'safe';
+    }
   }
-}
 
-function cellEmissive(status: string, isStart: boolean) {
-  if (isStart) return '#EA575F';
-  switch (status) {
-    case 'completed': return '#7a1a20';
-    case 'active':    return '#006688';
-    default:          return '#000000';
-  }
-}
+  const color = isStart
+    ? '#FFFFFF'
+    : effectiveStatus === 'danger'  ? '#EA575F'
+    : effectiveStatus === 'warning' ? '#FFA500'
+    : (effectiveStatus === 'safe' || effectiveStatus === 'completed') ? '#4CAF50'
+    : effectiveStatus === 'active'  ? '#00D5FF' : '#1A0A0B';
 
-// ── Single cell tile — only rendered if centre is inside the circle ──
+  const emissive = isStart
+    ? '#FFFFFF'
+    : effectiveStatus === 'danger'  ? '#7a1a20'
+    : effectiveStatus === 'warning' ? '#8a5a00'
+    : (effectiveStatus === 'safe' || effectiveStatus === 'completed') ? '#1b4d1d'
+    : effectiveStatus === 'active'  ? '#006688' : '#000000';
 
-function CellTile({ cell, radius, isStart }: { cell: Cell; radius: number; isStart: boolean }) {
-  const cx = (cell.index_x + 0.5) * CELL_W - radius;
-  const cz = (cell.index_y + 0.5) * CELL_W - radius;
+  // Centre the grid on (0, 0) — same centering logic as rectangle
+  const cx = (cell.index_x + 0.5) * CELL_W - side / 2;
+  const cz = (cell.index_y + 0.5) * CELL_W - side / 2;
 
-  if (Math.sqrt(cx * cx + cz * cz) > radius) return null;
+  const GAP = 0.035;
 
   return (
-    <mesh
-      position={[cx, isStart ? 0.012 : 0.006, cz]}
-      rotation={[-Math.PI / 2, 0, 0]}
-    >
+    <mesh position={[cx, isStart ? 0.012 : 0.006, cz]} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[CELL_W - GAP, CELL_W - GAP]} />
-      <meshStandardMaterial
-        color={cellColor(cell.status, isStart)}
-        emissive={cellEmissive(cell.status, isStart)}
-        emissiveIntensity={isStart ? 1.2 : 0.6}
-      />
+      <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={isStart ? 1.2 : 0.6} />
     </mesh>
   );
 }
-
-// ── Main 3-D scene ───────────────────────────────────────────
 
 function SiloScene({
   data, cells, radius, cylH, startingCellId,
@@ -81,6 +104,7 @@ function SiloScene({
   startingCellId?: string | null;
 }) {
   const latest = data[data.length - 1];
+  const side   = radius * 2; // full diameter = grid side length
 
   // Circular outlines: top rim (bright), bottom rim + 8 struts (dim)
   const outlines = useMemo(() => {
@@ -119,6 +143,7 @@ function SiloScene({
     ];
   }, [radius, cylH]);
 
+  // Shift group DOWN so the top face sits at y = 0
   return (
     <group position={[0, -cylH, 0]}>
       {/* Solid silo body */}
@@ -127,30 +152,35 @@ function SiloScene({
         <meshStandardMaterial color="#1F0A0C" />
       </mesh>
 
-      {/* Outline wires */}
+      {/* Circular outline wires */}
       {outlines.map((obj, i) => (
         <primitive key={i} object={obj} />
       ))}
 
-      {/* Top face */}
+      {/* Cell grid on the top face */}
       <group position={[0, cylH, 0]}>
-        {/* Grout disc — red bleeds through cell gaps to form the grid lines */}
+
+        {/* ── Grid Outline Layer (Grout) — circular to match silo top ── */}
         <mesh position={[0, 0.003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <circleGeometry args={[radius, 64]} />
           <meshBasicMaterial color="#EA575F" transparent opacity={0.35} />
         </mesh>
 
-        {/* Cell tiles */}
-        {cells.map((cell) => (
-          <CellTile
-            key={cell.id}
-            cell={cell}
-            radius={radius}
-            isStart={cell.id === startingCellId}
-          />
-        ))}
+        {cells
+          .filter(cell => {
+            const cx = (cell.index_x + 0.5) * CELL_W - side / 2;
+            const cz = (cell.index_y + 0.5) * CELL_W - side / 2;
+            return Math.sqrt(cx * cx + cz * cz) <= radius - CELL_W * 0.5;
+          })
+          .map(cell => (
+            <CellTile
+              key={cell.id}
+              cell={cell}
+              side={side}
+              isStart={cell.id === startingCellId}
+            />
+          ))}
 
-        {/* Robot cursor */}
         {latest && (
           <mesh position={[latest.x, 0.25, latest.z]}>
             <sphereGeometry args={[0.22, 16, 16]} />
@@ -166,15 +196,14 @@ function SiloScene({
   );
 }
 
-// ── Camera controller ──
-
+/** Controls the camera zoom and pan via shared refs updated by pinch gesture */
 function CameraController({
   baseCamY, baseCamZ, zoomRef, targetRef,
 }: {
   baseCamY: number;
   baseCamZ: number;
-  zoomRef: React.MutableRefObject<number>;
-  targetRef: React.MutableRefObject<{ x: number; z: number }>;
+  zoomRef: React.RefObject<number>;
+  targetRef: React.RefObject<{ x: number; z: number }>;
 }) {
   const { camera } = useThree();
 
@@ -192,9 +221,11 @@ function CameraController({
 
 function Legend() {
   const items = [
-    { color: '#EA575F', label: 'Visited' },
+    { color: '#EA575F', label: 'Danger'  },
+    { color: '#FFA500', label: 'Warning' },
+    { color: '#4CAF50', label: 'Safe'    },
     { color: '#00D5FF', label: 'Active'  },
-    { color: '#2A1215', label: 'Pending' },
+    { color: '#1A0A0B', label: 'Pending' },
   ];
   return (
     <View style={styles.legend}>
@@ -212,7 +243,7 @@ function Legend() {
 
 const SiloMapCircle = ({
   points = [],
-  cells = [],
+  cells  = [],
   hangar = null,
   startingCellId = null,
 }: {
@@ -223,29 +254,30 @@ const SiloMapCircle = ({
 }) => {
   const { width: screenWidth } = useWindowDimensions();
   const canvasWidth  = screenWidth - 32 - 36;
-  const canvasHeight = Math.round(canvasWidth * 0.75); // match rectangle aspect ratio
+  const canvasHeight = Math.round(canvasWidth * 0.75);
 
-  const diameterM = hangar?.diameter ?? 5;
+  const diameterM = hangar?.diameter ?? 3;
   const radius    = (diameterM * SCALE) / 2;
-  const cylH      = 1.4;
+  const cylH      = 3.0;
 
-  // Camera: fit circle into the canvas at a fixed elevation angle
-  const aspectRatio    = canvasWidth / canvasHeight;
-  const fov            = 50;
-  const halfFovV       = (fov / 2) * (Math.PI / 180);
-  const halfFovH       = Math.atan(Math.tan(halfFovV) * aspectRatio);
+  // ── Camera: fit the circle into the canvas width ──
+  const aspectRatio = canvasWidth / canvasHeight;
+  const fov         = 50;
+  const halfFovV    = (fov / 2) * (Math.PI / 180);
+  const halfFovH    = Math.atan(Math.tan(halfFovV) * aspectRatio);
+
   const elevationAngle = 38 * (Math.PI / 180);
   const MARGIN         = 1.15;
 
-  const dist = Math.max(
-    (radius * MARGIN) / Math.tan(halfFovH),
-    ((radius + cylH) * MARGIN) / Math.tan(halfFovV),
-  );
+  const distForWidth  = (radius       * MARGIN) / Math.tan(halfFovH);
+  const distForHeight = ((radius + cylH) * MARGIN) / Math.tan(halfFovV);
+  const dist          = Math.max(distForWidth, distForHeight);
+
   const camY     = dist * Math.sin(elevationAngle);
   const camZ     = dist * Math.cos(elevationAngle);
   const baseDist = dist;
 
-  // Gesture refs
+  // ── Pinch-to-zoom toward focal point ──
   const zoomRef      = useRef(1);
   const lastZoomRef  = useRef(1);
   const targetRef    = useRef({ x: 0, z: 0 });
@@ -286,6 +318,7 @@ const SiloMapCircle = ({
     })
     .onEnd(() => { lastZoomRef.current = zoomRef.current; });
 
+  // ── Pan to drag ──
   const lastPanRef = useRef({ x: 0, y: 0 });
 
   const panGesture = Gesture.Pan()
@@ -316,12 +349,11 @@ const SiloMapCircle = ({
       <View style={[styles.container, { width: canvasWidth, height: canvasHeight }]}>
         <Canvas
           camera={{ position: [0, camY, camZ], fov, near: 0.1, far: 300 }}
-          gl={{ antialias: false, powerPreference: 'high-performance' }}
         >
           <color attach="background" args={['#0D0305']} />
-          <ambientLight intensity={0.5} />
-          <directionalLight position={[4, 10, 6]}  intensity={2.0} />
-          <directionalLight position={[-3, 5, -4]} intensity={0.5} />
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[4, 10, 6]}  intensity={1.8} />
+          <directionalLight position={[-3, 5, -4]} intensity={0.4} />
           <CameraController
             baseCamY={camY}
             baseCamZ={camZ}
@@ -336,7 +368,6 @@ const SiloMapCircle = ({
             startingCellId={startingCellId}
           />
         </Canvas>
-        {/* Touch overlay — sibling after Canvas so it captures touches first */}
         <GestureDetector gesture={composedGesture}>
           <View style={StyleSheet.absoluteFill} collapsable={false} />
         </GestureDetector>
@@ -352,7 +383,7 @@ const styles = StyleSheet.create({
   },
   container: {
     backgroundColor: '#0D0305',
-    borderRadius: 16,
+    borderRadius: 20,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#3A1015',
@@ -360,7 +391,8 @@ const styles = StyleSheet.create({
   legend: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 20,
+    flexWrap: 'wrap',
+    gap: 16,
     paddingTop: 10,
     paddingBottom: 2,
   },
