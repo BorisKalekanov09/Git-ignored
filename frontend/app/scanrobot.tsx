@@ -10,6 +10,7 @@ import {
 import { CameraView } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { supabase } from '@/lib/supabase';
 
 const FINDER_SIZE = 240;
 const CORNER_SIZE = 28;
@@ -144,11 +145,17 @@ export default function ScanRobotScreen() {
       }
     }
 
+    // Only accept QR codes that start with "LunaBotId:"
+    const match = data.match(/^LunaBotId:(.+)/i);
+    if (!match) {
+      // Not a LunaBot QR code — ignore silently and keep scanning
+      return;
+    }
+
     isHandling.current = true;
     setScanned(true);
 
-    const match = data.match(/lunabotid:\s*(.+)/i);
-    const robotId = match ? match[1].trim() : data;
+    const robotId = match[1].trim();
 
     Alert.alert(
       'Connect Robot',
@@ -164,9 +171,23 @@ export default function ScanRobotScreen() {
         },
         {
           text: 'Approve',
-          style: 'destructive',
-          onPress: () => {
-            // TODO: save robot to Supabase
+          onPress: async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) {
+              Alert.alert('Error', 'You must be logged in to connect a robot.');
+              isHandling.current = false;
+              setScanned(false);
+              return;
+            }
+            const { error } = await supabase
+              .from('robots')
+              .upsert({ bot_id: robotId, user_id: user.id }, { onConflict: 'bot_id' });
+            if (error) {
+              Alert.alert('Error', error.message);
+              isHandling.current = false;
+              setScanned(false);
+              return;
+            }
             router.back();
           },
         },

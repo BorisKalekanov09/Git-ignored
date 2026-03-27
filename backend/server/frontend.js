@@ -175,9 +175,11 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
       return;
     }
 
-    const { temperature, humidity } = data;
+    const { temperature, humidity, air_quality, air_digital } = data;
     const avgTemp = parseFloat(temperature) || 25;
     const avgHum  = parseFloat(humidity)    || 50;
+    const avgAir  = parseFloat(air_quality) || 0;
+    const digAir  = parseInt(air_digital)   || 0;
 
     const { status, color } = cellStatus(avgTemp);
     console.log(`[Mission] ✅ Cell (${cell.index_x},${cell.index_y}) complete — temp=${avgTemp.toFixed(1)}°C → ${status}`);
@@ -197,6 +199,8 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
       device_id:   latestSensorData.device_id || 'robot-01',
       temperature: avgTemp,
       humidity:    avgHum,
+      air_quality: avgAir, // Assuming these columns exist
+      air_digital: digAir,
       latitude:    data.y_cm ?? null,
       longitude:   data.x_cm ?? null,
     }]);
@@ -210,6 +214,8 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
       color,
       avg_temp:     avgTemp,
       avg_humidity: avgHum,
+      avg_air:      avgAir,
+      dig_air:      digAir,
     });
 
     // Advance
@@ -289,6 +295,8 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
         if (data.device_id   !== undefined) latestSensorData.device_id   = data.device_id;
         if (data.temperature !== undefined) latestSensorData.temperature = data.temperature;
         if (data.humidity    !== undefined) latestSensorData.humidity    = data.humidity;
+        if (data.air_quality !== undefined) latestSensorData.air_quality = data.air_quality;
+        if (data.air_digital !== undefined) latestSensorData.air_digital = data.air_digital;
         if (data.x           !== undefined) latestSensorData.longitude   = data.x;
         if (data.y           !== undefined) latestSensorData.latitude    = data.y;
         if (data.latitude    !== undefined) latestSensorData.latitude    = data.latitude;
@@ -299,6 +307,8 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
           device_id:   data.device_id   || 'robot-01',
           temperature: data.temperature ?? null,
           humidity:    data.humidity    ?? null,
+          air_quality: data.air_quality ?? null,
+          air_digital: data.air_digital ?? null,
           latitude:    data.latitude ?? data.y ?? null,
           longitude:   data.longitude ?? data.x ?? null,
         }]);
@@ -309,6 +319,8 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
           type:        'sensor_data',
           temperature: latestSensorData.temperature,
           humidity:    latestSensorData.humidity,
+          air_quality: latestSensorData.air_quality,
+          air_digital: latestSensorData.air_digital,
           latitude:    latestSensorData.latitude,
           longitude:   latestSensorData.longitude,
           x:           latestSensorData.longitude,

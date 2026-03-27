@@ -1,9 +1,9 @@
 #pragma once
 
 // ── WiFi / Server ─────────────────────────────────────────────
-#define WIFI_SSID        "A1_F382"
-#define WIFI_PASSWORD    "Kek4Thx7"
-#define SERVER_ADDRESS   "192.168.100.43"
+#define WIFI_SSID        "Boris’s iPhone"
+#define WIFI_PASSWORD    "123123123"
+#define SERVER_ADDRESS   "172.20.10.3"
 #define SERVER_PORT      8080
 #define AUTH_KEY         "e4d2c8f1a5b9d3c7b2e1f4a9d6e8b4c2"
 #define DEVICE_ID        "robot-01"
@@ -21,6 +21,8 @@
 #define DHTTYPE  DHT11
 #define TRIG_PIN 32
 #define ECHO_PIN 35
+#define AIR_QUALITY_AO 39  // VN pin
+#define AIR_QUALITY_DO 34  // GPIO 34
 
 // ── Mission targets ───────────────────────────────────────────
 #define TARGET_Y_CM  50.0f

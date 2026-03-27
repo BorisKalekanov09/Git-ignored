@@ -63,6 +63,7 @@ unsigned long sampleStart = 0;
 #define SAMPLE_DURATION_MS 2500  // stay ~2.5 seconds
 float   sampleTempSum  = 0.0f;
 float   sampleHumSum   = 0.0f;
+float   sampleAirSum   = 0.0f; // analog air quality
 int     sampleCount    = 0;
 
 unsigned long telTimer       = 0;
@@ -77,11 +78,16 @@ WebSocketsClient ws;
 void sendCellComplete() {
   float avgTemp = (sampleCount > 0) ? (sampleTempSum / sampleCount) : dht.readTemperature();
   float avgHum  = (sampleCount > 0) ? (sampleHumSum  / sampleCount) : dht.readHumidity();
+  float avgAir  = (sampleCount > 0) ? (sampleAirSum  / sampleCount) : analogRead(AIR_QUALITY_AO);
+  int   digAir  = digitalRead(AIR_QUALITY_DO);
+
   String msg = "{\"type\":\"cell_complete\""
                ",\"x_cm\":"     + String(worldX, 1) +
                ",\"y_cm\":"     + String(worldY, 1) +
                ",\"temperature\":" + String(avgTemp, 2) +
                ",\"humidity\":"    + String(avgHum, 2) +
+               ",\"air_quality\":" + String(avgAir, 2) +
+               ",\"air_digital\":" + String(digAir) +
                "}";
   ws.sendTXT(msg);
   Serial.println(F("[CELL] cell_complete sent to server."));
@@ -96,6 +102,8 @@ void sendTelemetry() {
              + ",\"heading_deg\":"   + String(heading * 180.0f / PI, 1)
              + ",\"temperature\":"   + String(dht.readTemperature(), 1)
              + ",\"humidity\":"      + String(dht.readHumidity(), 1)
+             + ",\"air_quality\":"   + String(analogRead(AIR_QUALITY_AO))
+             + ",\"air_digital\":"   + String(digitalRead(AIR_QUALITY_DO))
              + ",\"latitude\":"      + String(worldY, 4)
              + ",\"longitude\":"     + String(worldX, 4)
              + "}";
@@ -227,6 +235,7 @@ void startPhase(DrivePhase ph) {
       motors(0, 0);
       sampleTempSum  = 0.0f;
       sampleHumSum   = 0.0f;
+      sampleAirSum   = 0.0f;
       sampleCount    = 0;
       sampleStart    = millis();
       state          = SAMPLING;
@@ -339,6 +348,7 @@ void setup() {
 
   motorsInit();
   sonarInit();
+  pinMode(AIR_QUALITY_DO, INPUT); // Air quality digital pin
 
   Wire.begin();
   dht.begin();
@@ -371,18 +381,24 @@ void setup() {
     Serial.println(F("  [OK] Sonar healthy."));
   printSeparator();
 
-  // WiFi
-  Serial.println(F("[WIFI] Connecting..."));
+  // WiFi — keep retrying until hotspot is available
+  Serial.println(F("[WIFI] Connecting... (will retry until hotspot is on)"));
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int wifiTries = 0;
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500); Serial.print(F("."));
-    if (++wifiTries > 30) { Serial.println(F("\n[WIFI] Timeout.")); break; }
+    for (int i = 0; i < 20; i++) {   // 10 seconds per attempt
+      if (WiFi.status() == WL_CONNECTED) break;
+      delay(500); Serial.print(F("."));
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println(F("\n[WIFI] Not found — retrying in 10s... (enable hotspot!)"));
+      WiFi.disconnect();
+      delay(2000);
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    }
   }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.print(F("[WIFI] Connected. IP: ")); Serial.println(WiFi.localIP());
-  }
+  Serial.println();
+  Serial.print(F("[WIFI] Connected. IP: ")); Serial.println(WiFi.localIP());
 
   // WebSocket
   String url = "/data?token=" + String(AUTH_KEY);
@@ -500,7 +516,8 @@ void loop() {
       float h = dht.readHumidity();
       if (!isnan(t) && !isnan(h)) {
         sampleTempSum += t;
-        sampleHumSum  += h;
+        sampleHumSum += h;
+        sampleAirSum += analogRead(AIR_QUALITY_AO);
         sampleCount++;
       }
       lastSampleTime = now;
