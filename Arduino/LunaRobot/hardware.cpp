@@ -8,10 +8,10 @@ Adafruit_MPU6050 mpu;
 DHT              dht(DHTPIN, DHTTYPE);
 
 // ── Shared state ──────────────────────────────────────────────
-float        calibGzOffset  = 0.0f;
-float        heading        = 0.0f;
-float        lastHeadingErr = 0.0f;
-unsigned long lastGyroTime  = 0;
+float         calibGzOffset  = 0.0f;
+float         heading        = 0.0f;
+float         lastHeadingErr = 0.0f;
+unsigned long lastGyroTime   = 0;
 
 // ─────────────────────────────────────────────────────────────
 // Internal helpers
@@ -19,7 +19,6 @@ unsigned long lastGyroTime  = 0;
 static void printSeparator() {
   Serial.println(F("------------------------------------------------------------"));
 }
-
 static void printBanner(const char* title) {
   Serial.println();
   printSeparator();
@@ -28,7 +27,7 @@ static void printBanner(const char* title) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Motors
+// Motors — raw write, no mixing
 // ─────────────────────────────────────────────────────────────
 void motorsInit() {
   pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT); pinMode(ENA, OUTPUT);
@@ -40,27 +39,67 @@ void motorsInit() {
 void motors(int l, int r) {
   l = constrain(l, -255, 255);
   r = constrain(r, -255, 255);
-
-  // ── NORMAL wiring ──────────────────────────────────────────
   digitalWrite(IN1, l >= 0 ? HIGH : LOW);
   digitalWrite(IN2, l >= 0 ? LOW  : HIGH);
   analogWrite(ENA, abs(l));
-
   digitalWrite(IN3, r >= 0 ? HIGH : LOW);
   digitalWrite(IN4, r >= 0 ? LOW  : HIGH);
   analogWrite(ENB, abs(r));
+}
 
-  // ── REVERSED wiring (uncomment if robot goes backward) ─────
-  // digitalWrite(IN1, l >= 0 ? LOW  : HIGH);
-  // digitalWrite(IN2, l >= 0 ? HIGH : LOW);
-  // analogWrite(ENA, abs(l));
-  // digitalWrite(IN3, r >= 0 ? LOW  : HIGH);
-  // digitalWrite(IN4, r >= 0 ? HIGH : LOW);
-  // analogWrite(ENB, abs(r));
+// ─────────────────────────────────────────────────────────────
+// Screw drive primitives
+//
+//  Physical layout (top view):
+//
+//    [LEFT screw] ====>    <==== [RIGHT screw]
+//         faces right            faces left
+//
+//  From PS4 testing:
+//    "Forward" = motors(SPEED, 0)      one motor dominant, other off/opposing
+//    "Spin"    = motors(SPEED, SPEED)  both same direction
+//
+//  screwForward: left motor is dominant (sonar faces that side).
+//    dominant = full speed forward
+//    helper   = SCREW_OPPOSE_RATIO * speed in reverse
+//
+//  screwSpin: both motors same direction.
+//    positive = CCW (left), negative = CW (right)
+// ─────────────────────────────────────────────────────────────
+void screwForward(int speed) {
+  // speed: -255..255  (positive = forward)
+  int dominant =  speed;
+  int helper   = -(int)(speed * SCREW_OPPOSE_RATIO);
+  motors(dominant, helper);
+}
+
+void screwSpin(int speed) {
+  // speed: -255..255  (positive = CCW/left, negative = CW/right)
+  motors(speed, speed);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Drive straight with PD heading lock
+//
+// The sonar is on the LEFT (dominant) motor side, which is the
+// side that faces the direction of travel. The PD correction
+// modulates only the dominant motor speed — the helper stays
+// fixed at its oppose ratio so it doesn't fight the correction.
+// ─────────────────────────────────────────────────────────────
+void driveStraight(float headingTarget, int dir) {
+  float err        = headingTarget - heading;
+  float correction = HEADING_KP * err + HEADING_KD * (err - lastHeadingErr);
+  lastHeadingErr   = err;
+
+  int dominant = constrain((int)(TURN_SPEED + correction), 0, 255);
+  int helper   = -(int)(dominant * SCREW_OPPOSE_RATIO);
+
+  motors(dir * dominant, dir * helper);
 }
 
 // ─────────────────────────────────────────────────────────────
 // Ultrasonic
+// Sonar faces the LEFT motor side = the robot's travel direction
 // ─────────────────────────────────────────────────────────────
 void sonarInit() {
   pinMode(TRIG_PIN, OUTPUT);
@@ -80,7 +119,6 @@ static float readSonarOnce() {
 float readSonarCm() {
   float buf[SONAR_SAMPLES];
   for (int i = 0; i < SONAR_SAMPLES; i++) { buf[i] = readSonarOnce(); delay(5); }
-  // Insertion sort → median
   for (int i = 1; i < SONAR_SAMPLES; i++) {
     float key = buf[i]; int j = i - 1;
     while (j >= 0 && buf[j] > key) { buf[j+1] = buf[j]; j--; }
@@ -90,15 +128,14 @@ float readSonarCm() {
   return (val > SONAR_MAX_CM) ? SONAR_MAX_CM : val;
 }
 
-bool sonarStartCheck(float reading, const char* phaseName,
-                     void (*setFault)()) {
+bool sonarStartCheck(float reading, const char* phaseName, void (*setFault)()) {
   if (reading >= SONAR_MAX_CM - 1.0f || reading <= 2.0f) {
     motors(0, 0);
     Serial.println();
     printSeparator();
     Serial.print(F("  [FAULT] No wall detected before ")); Serial.println(phaseName);
-    Serial.print(F("  Sonar reading was: ")); Serial.print(reading, 1); Serial.println(F(" cm"));
-    Serial.println(F("  Cannot navigate without a wall in range. Halting."));
+    Serial.print(F("  Sonar reading: ")); Serial.print(reading, 1); Serial.println(F(" cm"));
+    Serial.println(F("  Halting — cannot navigate without distance reference."));
     printSeparator();
     setFault();
     return false;
@@ -148,18 +185,4 @@ void updateHeading() {
   lastGyroTime = now;
   if (dt <= 0 || dt > 0.05f) return;
   heading += readGz() * dt;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Drive straight (PD heading lock)
-// Correction sign: positive error → steer left → slow left, speed right.
-// ─────────────────────────────────────────────────────────────
-void driveStraight(float headingTarget) {
-  float err        = headingTarget - heading;
-  float correction = HEADING_KP * err + HEADING_KD * (err - lastHeadingErr);
-  lastHeadingErr   = err;
-
-  int leftSpeed  = constrain((int)(DRIVE_SPEED - correction), 0, 255);
-  int rightSpeed = constrain((int)(DRIVE_SPEED + correction), 0, 255);
-  motors(leftSpeed, rightSpeed);
 }
