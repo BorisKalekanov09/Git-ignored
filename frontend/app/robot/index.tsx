@@ -20,10 +20,11 @@ import { siloSocket } from '@/services/websocket';
 import SiloMap from '@/components/SiloMap';
 
 // ── Types ───────────────────────────────────────────────────
-type HeatPoint = { x: number; y: number; z: number; temp: number };
+type HeatPoint = { x: number; y: number; z: number; temp: number; humidity: number };
 type SensorRecord = {
   id: number;
   temperature: number | null;
+  humidity: number | null;
   latitude: number | null;
   longitude: number | null;
   created_at: string;
@@ -35,12 +36,13 @@ const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2;
 
 function toSurfacePoints(records: SensorRecord[]): HeatPoint[] {
-  if (!records.length) return [{ x: 0, y: SURFACE_Y, z: 0, temp: 25 }];
+  if (!records.length) return [{ x: 0, y: SURFACE_Y, z: 0, temp: 25, humidity: 45 }];
   return records.map((r) => ({
     x: (Number(r.longitude) || 0) * 2,
     y: SURFACE_Y,
     z: (Number(r.latitude) || 0) * 2,
     temp: Number(r.temperature) || 0,
+    humidity: Number(r.humidity) || 0,
   }));
 }
 
@@ -119,7 +121,7 @@ export default function RobotScreen() {
     const loadLatestFromDb = async () => {
       const { data, error } = await supabase
         .from('sensor_data')
-        .select('id, temperature, latitude, longitude, created_at')
+        .select('id, temperature, humidity, latitude, longitude, created_at')
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -144,6 +146,7 @@ export default function RobotScreen() {
         {
           id: Date.now(),
           temperature: Number(newData.temperature ?? newData.temp) || 0,
+          humidity: Number(newData.humidity ?? newData.moisture) || 0,
           latitude: Number(newData.latitude ?? newData.y) || 0,
           longitude: Number(newData.longitude ?? newData.x) || 0,
           created_at: new Date().toISOString(),
@@ -337,16 +340,18 @@ export default function RobotScreen() {
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Avg. Temp</Text>
             <Text style={[styles.statValue, { color: tempStatus.color }]}>
-              {latestTemp.toFixed(1)}°C
+              {(latestTemp ?? 0).toFixed(1)}°C
             </Text>
             <Text style={[styles.statSub, { color: tempStatus.color }]}>
               {tempStatus.label}
             </Text>
           </View>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Avg. Moisture</Text>
-            <Text style={styles.statValue}>—</Text>
-            <Text style={styles.statSub}>N/A</Text>
+            <Text style={styles.statLabel}>Avg. Humidity</Text>
+            <Text style={styles.statValue}>
+              {points.length > 0 ? (points[points.length - 1].humidity ?? 0).toFixed(0) : "0"}%
+            </Text>
+            <Text style={styles.statSub}>Relative Humidity</Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Air Quality</Text>
@@ -359,10 +364,10 @@ export default function RobotScreen() {
         <View style={styles.controlCard}>
           <Text style={styles.controlTitle}>Control Deck</Text>
           <View style={styles.controlRow}>
-            <TouchableOpacity style={styles.deployBtn}>
+            <TouchableOpacity style={styles.deployBtn} onPress={() => { siloSocket.sendCommand('deploy'); Alert.alert('Command Sent', 'Deploy instruction sent to the robot.'); }}>
               <Text style={styles.deployBtnText}>Deploy</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.recallBtn}>
+            <TouchableOpacity style={styles.recallBtn} onPress={() => { siloSocket.sendCommand('recall'); Alert.alert('Command Sent', 'Recall/Stop instruction sent to the robot.'); }}>
               <Text style={styles.recallBtnText}>Recall</Text>
             </TouchableOpacity>
           </View>

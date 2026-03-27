@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────
-enum State { CALIB, DRIVE_Y, TURN, DRIVE_X, DONE, FAULT };
+enum State { CALIB, WAITING, DRIVE_Y, TURN, DRIVE_X, DONE, FAULT };
 State state = CALIB;
 
 float distTraveled   = 0.0f;
@@ -36,6 +36,38 @@ WebSocketsClient ws;
 void wsEvent(WStype_t type, uint8_t* p, size_t len) {
   if (type == WStype_CONNECTED)    Serial.println(F("[WS] Connected to server."));
   if (type == WStype_DISCONNECTED) Serial.println(F("[WS] Disconnected from server."));
+  if (type == WStype_TEXT) {
+    String payload = (char*)p;
+    
+    // ── Handle DEPLOY (Start) ──
+    if (payload.indexOf("\"type\":\"command\"") >= 0 && payload.indexOf("\"action\":\"deploy\"") >= 0) {
+      if (state == WAITING || state == DONE) {
+        Serial.println(F("[WS] Command: DEPLOY — Starting mission..."));
+        
+        resetHeadingState();
+        distTraveled   = 0.0f;
+        sonarStart     = readSonarCm();
+        phaseStartTime = millis();
+
+        if (!sonarStartCheck(sonarStart, "LEG 1", setFault)) return;
+
+        state = DRIVE_Y;
+        printBanner("STARTING LEG 1 — DRIVE FORWARD (Y)");
+        Serial.print(F("  Sonar at start      : ")); Serial.print(sonarStart, 1); Serial.println(F(" cm to wall"));
+        Serial.print(F("  Target sonar reading: ")); Serial.print(sonarStart - TARGET_Y_CM, 1); Serial.println(F(" cm"));
+        Serial.print(F("  Must travel         : ")); Serial.print(TARGET_Y_CM, 1); Serial.println(F(" cm"));
+        printSeparator();
+      }
+    }
+    
+    // ── Handle RECALL (Emergency Stop) ──
+    else if (payload.indexOf("\"type\":\"command\"") >= 0 && payload.indexOf("\"action\":\"recall\"") >= 0) {
+      Serial.println(F("[WS] Command: RECALL — Emergency Stop Engaged."));
+      motors(0, 0); // Kill power immediately
+      state = WAITING; // Go back to waiting for a new deploy
+      printBanner("MISSION ABORTED — WAITING");
+    }
+  }
 }
 
 void wsTask(void*) { while (1) { ws.loop(); vTaskDelay(10); } }
@@ -170,19 +202,10 @@ void setup() {
   Serial.print(F("           Speed    : ")); Serial.println(DRIVE_SPEED);
   printSeparator();
 
-  // Validate sonar before Leg 1
-  resetHeadingState();
-  distTraveled   = 0.0f;
-  sonarStart     = readSonarCm();
-  phaseStartTime = millis();
-
-  if (!sonarStartCheck(sonarStart, "LEG 1", setFault)) return;
-
-  state = DRIVE_Y;
-  printBanner("STARTING LEG 1 — DRIVE FORWARD (Y)");
-  Serial.print(F("  Sonar at start      : ")); Serial.print(sonarStart, 1); Serial.println(F(" cm to wall"));
-  Serial.print(F("  Target sonar reading: ")); Serial.print(sonarStart - TARGET_Y_CM, 1); Serial.println(F(" cm"));
-  Serial.print(F("  Must travel         : ")); Serial.print(TARGET_Y_CM, 1); Serial.println(F(" cm"));
+  // Wait for command
+  state = WAITING;
+  printBanner("WAITING FOR DEPLOY COMMAND");
+  Serial.println(F("  Robot is ready. Press Deploy in the app to begin Leg 1."));
   printSeparator();
 }
 
@@ -364,6 +387,10 @@ void loop() {
     motors(0, 0);
     if (now - logTimer >= 5000)
       Serial.println(F("[FAULT] Robot halted due to sensor error. Power cycle to restart."));
+    break;
+
+  case WAITING:
+    motors(0, 0);
     break;
 
   case CALIB:

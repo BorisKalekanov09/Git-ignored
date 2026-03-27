@@ -30,23 +30,34 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
 
     // Auth check
     if (AUTH_KEY && token !== AUTH_KEY) {
-      console.warn(`[Frontend] Unauthorized WS connection from ${clientIP}`);
+      console.warn(`[WS] Connection Denied — Unauthorized token from ${clientIP}`);
       ws.close(1008, 'Unauthorized');
       return;
     }
 
-    console.log(`[Frontend] Client connected: ${clientIP}`);
+    console.log(`[WS] New Device Connected: ${clientIP} (Authorized)`);
 
     // Send current state immediately on connect
     ws.send(JSON.stringify({ type: 'sensor_data', data: latestSensorData }));
 
     ws.on('message', async (message) => {
-      console.log(`[Frontend] Raw message: ${message}`);
+      let data;
+      try {
+        data = JSON.parse(message);
+      } catch (err) {
+        console.error('[WS] Failed to parse message:', message);
+        return;
+      }
+
+      // ── Handle Commands from App directly to Robot ──
+      if (data.type === 'command') {
+        console.log(`[WS] 📢 RELAYING COMMAND:`, data.action, "to all devices.");
+        broadcastData(data); // Force broadcast { type: "command", action: "recall/deploy" }
+        return;
+      }
 
       try {
-        const data = JSON.parse(message);
-
-        // Update shared in-memory state
+        console.log(`[WS] Data from ${data.device_id || 'unknown'}: X=${data.longitude || data.x || 0}, Y=${data.latitude || data.y || 0}`);
         if (data.device_id   !== undefined) latestSensorData.device_id   = data.device_id;
         if (data.temperature !== undefined) latestSensorData.temperature = data.temperature;
         if (data.co2         !== undefined) latestSensorData.co2         = data.co2;
