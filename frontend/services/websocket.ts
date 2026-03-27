@@ -11,7 +11,7 @@ const getServerIP = () => {
     if (configIP) return configIP;
   } catch (e) { }
 
-  return '172.20.10.3'; // fallback
+  return '192.168.0.106'; // fallback
 };
 
 const getAuthKey = () => {
@@ -95,9 +95,9 @@ export const siloSocket = {
     };
   },
 
-  sendCommand: (action: string) => {
+  sendCommand: (action: string, payload?: object) => {
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "command", action }));
+      socket.send(JSON.stringify({ type: "command", action, ...payload }));
       console.log(`📤 Sent command: ${action}`);
     }
   },
