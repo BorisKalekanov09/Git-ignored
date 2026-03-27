@@ -45,7 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) return { error: error.message };
 
     if (data.user) {
-      await supabase.from('users').insert([{ email, name }]);
+      await supabase.from('users').insert([{ id: data.user.id, email, name }]);
     }
 
     return { error: null, needsConfirmation: !data.session };
