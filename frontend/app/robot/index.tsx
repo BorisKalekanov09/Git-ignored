@@ -17,7 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BlurHeader from '@/components/BlurHeader';
 import { supabase } from '@/lib/supabase';
 import { siloSocket } from '@/services/websocket';
-import SiloMap from '@/components/SiloMap';
+import SiloMap from '@/components/SiloMapRectangle';
+import SiloMapCircle from '@/components/SilomapCircle';
 
 // ── Types ───────────────────────────────────────────────────
 type HeatPoint = { x: number; y: number; z: number; temp: number; humidity: number };
@@ -98,7 +99,7 @@ export default function RobotScreen() {
         .eq('hangar_id', hData.id)
         .order('index_y', { ascending: true })
         .order('index_x', { ascending: true });
-          if (cData) setCells(cData);
+      if (cData) setCells(cData);
       if (hData.starting_cell_id) setStartingCellId(hData.starting_cell_id);
     };
 
@@ -154,17 +155,17 @@ export default function RobotScreen() {
     const off = siloSocket.onSensorData((data: any) => {
       // 1. Live Heat Map Points
       if (data.type === 'sensor_data' || data.temperature !== undefined) {
-         const livePoint = toSurfacePoints([
-           {
-             id: Date.now(),
-             temperature: Number(data.temperature ?? data.temp) || 0,
-             humidity: Number(data.humidity ?? data.moisture) || 0,
-             latitude: Number(data.latitude ?? data.y) || 0,
-             longitude: Number(data.longitude ?? data.x) || 0,
-             created_at: new Date().toISOString(),
-           },
-         ])[0];
-         setPoints((current) => [...current.slice(-149), livePoint]);
+        const livePoint = toSurfacePoints([
+          {
+            id: Date.now(),
+            temperature: Number(data.temperature ?? data.temp) || 0,
+            humidity: Number(data.humidity ?? data.moisture) || 0,
+            latitude: Number(data.latitude ?? data.y) || 0,
+            longitude: Number(data.longitude ?? data.x) || 0,
+            created_at: new Date().toISOString(),
+          },
+        ])[0];
+        setPoints((current) => [...current.slice(-149), livePoint]);
       }
 
       // 2. Real-time Cell status (Real-time path painting)
@@ -247,7 +248,7 @@ export default function RobotScreen() {
       >
         <Pressable style={styles.modalOverlay} onPress={() => setPromptVisible(false)}>
           <KeyboardAvoidingView behavior="padding">
-            <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Pressable style={styles.modalCard} onPress={() => { }}>
               <Text style={styles.modalTitle}>Set Starting Position</Text>
               <Text style={styles.modalSubtitle}>Enter cell coordinates as x,y (e.g. 3,5)</Text>
               <TextInput
@@ -303,7 +304,11 @@ export default function RobotScreen() {
             onTouchEnd={() => setScrollEnabled(true)}
             onTouchCancel={() => setScrollEnabled(true)}
           >
-            <SiloMap points={points} cells={cells} hangar={hangar} startingCellId={startingCellId} />
+            {hangar?.shape === 'circle' ? (
+              <SiloMapCircle points={points} cells={cells} hangar={hangar} startingCellId={startingCellId} />
+            ) : (
+              <SiloMap points={points} cells={cells} hangar={hangar} startingCellId={startingCellId} />
+            )}
           </View>
 
           {/* Starting Position button */}

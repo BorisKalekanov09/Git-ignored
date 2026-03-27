@@ -7,8 +7,8 @@ let angle = 0;
 
 async function sendMockData() {
   // Move in a small circle around your previous GPS points
-  const lat = 6.3376 + Math.sin(angle) * 0.001;
-  const lon = -1.1211 + Math.cos(angle) * 0.001;
+  const lat = 0 + Math.sin(angle);
+  const lon = 0+ Math.cos(angle);
   
   const payload = {
     device_id: "mock-robot-01",
