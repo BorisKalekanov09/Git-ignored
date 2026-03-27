@@ -262,9 +262,9 @@ void wsEvent(WStype_t type, uint8_t* p, size_t len) {
       state = WAITING;
       printBanner("MISSION ABORTED — WAITING");
     }
-    if (payload.indexOf(""type":"set_pos"") >= 0) {
-      int xi = payload.indexOf(""x_cm":");
-      int yi = payload.indexOf(""y_cm":");
+    if (payload.indexOf("\"type\":\"set_pos\"") >= 0) {
+      int xi = payload.indexOf("\"x_cm\":");
+      int yi = payload.indexOf("\"y_cm\":");
       if (xi >= 0 && yi >= 0) {
         worldX = payload.substring(xi + 7).toFloat();
         worldY = payload.substring(yi + 7).toFloat();

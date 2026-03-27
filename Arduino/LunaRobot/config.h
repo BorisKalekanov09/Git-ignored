@@ -34,10 +34,10 @@
 // ── Turn ──────────────────────────────────────────────────────
 #define TURN_DIRECTION     1
 #define TURN_DEGREES       90.0f
-#define TURN_TOLERANCE_DEG 2.0f
+#define TURN_TOLERANCE_DEG 1.2f
 
 // ── Speeds ────────────────────────────────────────────────────
-#define DRIVE_SPEED  250
+#define DRIVE_SPEED  200
 #define TURN_SPEED   250
 
 // ── Screw drive ───────────────────────────────────────────────
@@ -46,7 +46,7 @@
 // 0.0 = helper fully off (pure one-motor)
 // 0.4 = helper pushes back 40% to aid forward motion
 // Tune up in 0.1 steps if not moving enough forward.
-#define SCREW_OPPOSE_RATIO 0.5f
+#define SCREW_OPPOSE_RATIO 0.3f
 
 // ── Heading PD controller ─────────────────────────────────────
 // Note: heading correction now only affects the dominant motor
