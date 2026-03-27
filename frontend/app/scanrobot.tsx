@@ -181,7 +181,7 @@ export default function ScanRobotScreen() {
             }
             const { error } = await supabase
               .from('robots')
-              .upsert({ bot_id: robotId, user_id: user.id }, { onConflict: 'bot_id' });
+              .upsert({ bot_id: robotId, user_id: user.id }, { onConflict: 'bot_id,user_id' });
             if (error) {
               Alert.alert('Error', error.message);
               isHandling.current = false;
