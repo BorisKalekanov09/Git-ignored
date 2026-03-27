@@ -18,7 +18,7 @@ import BlurHeader from '@/components/BlurHeader';
 import { supabase } from '@/lib/supabase';
 import { siloSocket } from '@/services/websocket';
 import SiloMap from '@/components/SiloMapRectangle';
-import SiloMapCircle from '@/components/SilomapCircle';
+import SiloMapCircle from '@/components/SiloMapCircle';
 
 // ── Types ───────────────────────────────────────────────────
 type HeatPoint = { x: number; y: number; z: number; temp: number; humidity: number };
@@ -46,11 +46,10 @@ const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2;
 
 function toSurfacePoints(records: SensorRecord[]): HeatPoint[] {
-  if (!records.length) return [{ x: 0, y: SURFACE_Y, z: 0, temp: 25, humidity: 45 }];
   return records.map((r) => ({
-    x: (Number(r.longitude) || 0) * 2,
+    x: (Number(r.longitude) || 0) * 0.01, 
     y: SURFACE_Y,
-    z: (Number(r.latitude) || 0) * 2,
+    z: (Number(r.latitude) || 0) * 0.01,
     temp: Number(r.temperature) || 0,
     humidity: Number(r.humidity) || 0,
   }));

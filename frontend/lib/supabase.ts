@@ -2,9 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const SUPABASE_URL = 'https://rsilwokzrjleoymbclqc.supabase.co';
-const SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJzaWx3b2t6cmpsZW95bWJjbHFjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MDg4MDksImV4cCI6MjA5MDA4NDgwOX0.EZHu24ghF1mHVKdgPFU6vOYih5vKZ-Xccd4j7h7WqTs';
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
 // For web: use localStorage when available (safe for SSR too)
 const webStorage =
