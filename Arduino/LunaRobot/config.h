@@ -3,9 +3,9 @@
 // ── WiFi / Server ─────────────────────────────────────────────
 #define WIFI_SSID        "A1_F382"
 #define WIFI_PASSWORD    "Kek4Thx7"
-#define SERVER_ADDRESS   "10.17.114.173"
+#define SERVER_ADDRESS   "192.168.100.43"
 #define SERVER_PORT      8080
-#define AUTH_KEY         "4775f0fb31998501257ac92598380e2f"
+#define AUTH_KEY         "e4d2c8f1a5b9d3c7b2e1f4a9d6e8b4c2"
 #define DEVICE_ID        "robot-01"
 
 // ── Motor Pins (L298N) ────────────────────────────────────────

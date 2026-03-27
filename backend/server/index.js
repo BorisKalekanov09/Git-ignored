@@ -38,10 +38,14 @@ const latestSensorData = {
   longitude: 0,
 };
 
-function broadcastData() {
+function broadcastData(customPayload = null) {
   wss.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({ type: 'sensor_data', data: latestSensorData }));
+      if (customPayload) {
+        client.send(JSON.stringify(customPayload));
+      } else {
+        client.send(JSON.stringify({ type: 'sensor_data', data: latestSensorData }));
+      }
     }
   });
 }
