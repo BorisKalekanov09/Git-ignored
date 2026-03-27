@@ -54,25 +54,41 @@ function broadcastData(customPayload = null) {
     }
   });
 }
-
 async function processCellUpdate(data) {
   try {
-    if (data.latitude === undefined || data.longitude === undefined) return;
+    const lat = data.latitude ?? data.y;
+    const lon = data.longitude ?? data.x;
+    if (lat === undefined || lon === undefined) return;
 
-    const cellSize = 0.2;
-    const cellX = Math.floor(data.longitude / cellSize);
-    const cellY = Math.floor(data.latitude / cellSize);
+    // ── THE MULTIPLIER ──
+    // If your mock-robot sends 0.001, we multiply by 1000 to get 1 meter.
+    const MULTIPLIER = 1000; 
+    const cellSize = 0.2; // 20cm
 
+    const metersX = lon * MULTIPLIER;
+    const metersY = lat * MULTIPLIER;
+
+    const cellX = Math.floor(metersX / cellSize);
+    const cellY = Math.floor(metersY / cellSize);
+
+    // Get the active hangar 
     const { data: hangar } = await supabase.from('hangars').select('id').limit(1).maybeSingle();
 
     if (hangar) {
       const { error } = await supabase
         .from('cells')
-        .update({ status: 'completed', last_visited_at: new Date() })
-        .match({ hangar_id: hangar.id, index_x: cellX, index_y: cellY });
+        .update({ 
+          status: 'completed', 
+          last_visited_at: new Date().toISOString() 
+        })
+        .match({ 
+          hangar_id: hangar.id, 
+          index_x: cellX, 
+          index_y: cellY 
+        });
 
       if (!error) {
-        console.log(`[Cell] Marked cell (${cellX}, ${cellY}) as completed`);
+        console.log(`[Cell] Marked cell (${cellX}, ${cellY}) as COMPLETED`);
       }
     }
   } catch (err) {
