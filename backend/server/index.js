@@ -114,7 +114,16 @@ require('./frontend')(app, wss, WebSocket, shared);
 // ===============================
 // Start server
 // ===============================
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Server running at: http://localhost:${PORT}`);
   console.log('WebSocket running on same port');
+
+  // Auto-clear any stuck active deployments from previous crash/restart
+  // so the mobile app is never permanently locked out
+  const { error } = await supabase
+    .from('deployments')
+    .update({ status: 'completed', ended_at: new Date().toISOString() })
+    .eq('status', 'active');
+  if (!error) console.log('[Startup] ✅ Cleared any stuck active deployments.');
+  else console.warn('[Startup] ⚠️  Could not clear deployments:', error.message);
 });

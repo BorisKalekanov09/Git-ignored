@@ -57,7 +57,6 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
 
   // Build snake-pattern ordered cell list, starting from startCell's row
   function buildSnakeOrder(cells, startCell) {
-    // Group by row (index_y)
     const rowMap = {};
     for (const c of cells) {
       if (!rowMap[c.index_y]) rowMap[c.index_y] = [];
@@ -65,7 +64,7 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     }
     const sortedRows = Object.keys(rowMap).map(Number).sort((a, b) => a - b);
 
-    // Rotate so startCell's row comes first
+    // Rotate/subset rows so startCell's row comes first (sweeping downwards)
     const startRowIdx = sortedRows.indexOf(startCell.index_y);
     const orderedRows = [
       ...sortedRows.slice(startRowIdx >= 0 ? startRowIdx : 0),
@@ -77,15 +76,11 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
       const rowCells = [...rowMap[rowKey]].sort((a, b) => a.index_x - b.index_x);
       let ordered;
       if (rowNum === 0) {
-        // Start from startCell.index_x: go right to end, then sweep back over cells to the left
+        // First row: start exactly at startCell, sweep to right, then catch left side
         const si = rowCells.findIndex(c => c.index_x === startCell.index_x);
-        if (si > 0) {
-          ordered = [...rowCells.slice(si), ...rowCells.slice(0, si).reverse()];
-        } else {
-          ordered = rowCells;
-        }
+        ordered = [...rowCells.slice(si), ...rowCells.slice(0, si).reverse()];
       } else {
-        // Even rows → left to right, odd rows → right to left (snake)
+        // Alternating snake pattern
         ordered = rowNum % 2 === 0 ? rowCells : rowCells.reverse();
       }
       result.push(...ordered);
@@ -97,7 +92,7 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
   // Mission handlers (module-level, not per-connection)
   // ─────────────────────────────────────────────────────────────────
 
-  async function startMission() {
+  async function startMission(startingX, startingY, appHangarId) {
     if (mission.running) {
       console.log('[Mission] Already running — ignoring duplicate deploy.');
       return;
@@ -105,14 +100,19 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
 
     console.log('[Mission] 🚀 Loading hangar data from Supabase...');
 
-    // Query hangars — use limit(1) so multiple rows don't break maybeSingle()
-    // Order by created_at desc to always pick the latest hangar
-    const { data: hData, error: hErr } = await supabase
+    let hQuery = supabase
       .from('hangars')
-      .select('id, width, height, starting_cell_id')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .select('id, width, height, starting_cell_id');
+
+    if (appHangarId) {
+      console.log(`[Mission] Using explicit hangar_id from app: ${appHangarId}`);
+      hQuery = hQuery.eq('id', appHangarId);
+    } else {
+      console.warn('[Mission] ⚠️ No hangar_id from app — picking latest as fallback.');
+      hQuery = hQuery.order('created_at', { ascending: false });
+    }
+
+    const { data: hData, error: hErr } = await hQuery.limit(1).maybeSingle();
 
     console.log('[Mission] Hangar query result:', JSON.stringify({ hData, hErr }));
 
@@ -150,18 +150,18 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
 
     console.log(`[Mission] ${allCells.length} cells loaded.`);
 
-    // Find starting cell from starting_cell_id, fallback to (0,0)
+    // Find starting cell by x,y coordinates (most reliable — bypasses hangar UUID mismatch)
     let startCell = { index_x: 0, index_y: 0 };
-    if (hData.starting_cell_id) {
-      const sc = allCells.find(c => c.id === hData.starting_cell_id);
+    if (startingX !== undefined && startingY !== undefined) {
+      const sc = allCells.find(c => c.index_x === startingX && c.index_y === startingY);
       if (sc) {
         startCell = { index_x: sc.index_x, index_y: sc.index_y };
-        console.log(`[Mission] Starting from cell set in app: (${sc.index_x}, ${sc.index_y})`);
+        console.log(`[Mission] ✅ Starting from cell (${sc.index_x}, ${sc.index_y}) — matched by coordinates.`);
       } else {
-        console.warn('[Mission] starting_cell_id not found in cells — defaulting to (0,0)');
+        console.warn(`[Mission] No cell found at (${startingX}, ${startingY}) — defaulting to (0,0)`);
       }
     } else {
-      console.log('[Mission] No starting_cell_id set — defaulting to (0,0)');
+      console.log('[Mission] No starting position provided — defaulting to (0,0)');
     }
 
     // Build snake path
@@ -321,7 +321,7 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
       // ── Commands from the app ─────────────────────────────────
       if (data.type === 'command') {
         if (data.action === 'deploy') {
-          await startMission();
+          await startMission(data.starting_x, data.starting_y, data.hangar_id);
         } else if (data.action === 'recall') {
           abortMission();
         } else {

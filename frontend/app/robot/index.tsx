@@ -179,6 +179,7 @@ export default function RobotScreen() {
       const { data: hData } = await supabase
         .from('hangars')
         .select('*')
+        .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (!hData) return;
@@ -355,7 +356,12 @@ export default function RobotScreen() {
     deployStartRef.current = Date.now();
     setDangerLog([]);
     setIsDeployed(true);
-    siloSocket.sendCommand('deploy');
+    // Send hangar_id and coordinates to ensure backend uses the correct hangar
+    const startCell = cells.find(c => c.id === startingCellId);
+    siloSocket.sendCommand('deploy', {
+      hangar_id: hangar?.id,
+      ...(startCell ? { starting_x: startCell.index_x, starting_y: startCell.index_y } : {})
+    });
     Alert.alert('Deployed', 'Robot deployed. Trail will appear as cells are visited.');
   };
 

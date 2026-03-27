@@ -95,9 +95,9 @@ export const siloSocket = {
     };
   },
 
-  sendCommand: (action: string) => {
+  sendCommand: (action: string, payload?: object) => {
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "command", action }));
+      socket.send(JSON.stringify({ type: "command", action, ...payload }));
       console.log(`📤 Sent command: ${action}`);
     }
   },
