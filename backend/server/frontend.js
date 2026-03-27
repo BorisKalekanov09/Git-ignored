@@ -176,7 +176,12 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     console.log(`[Mission] Snake path: ${mission.cells.length} cells`);
     console.log(`[Mission] First 5: ${mission.cells.slice(0, 5).map(c => `(${c.index_x},${c.index_y})`).join(' → ')}`);
 
-    sendGoto(mission.cells[mission.idx]);
+    // Teleport the robot to the starting coordinate so its worldX and worldY match the grid
+    broadcastData({ type: 'set_pos', x_cm: mission.startX, y_cm: mission.startY });
+
+    setTimeout(() => {
+      sendGoto(mission.cells[mission.idx]);
+    }, 200);
   }
 
   async function handleCellComplete(data) {

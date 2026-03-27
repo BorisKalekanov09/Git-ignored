@@ -11,7 +11,7 @@ const getServerIP = () => {
     if (configIP) return configIP;
   } catch (e) { }
 
-  return '172.20.10.3'; // fallback
+  return '192.168.0.106'; // fallback
 };
 
 const getAuthKey = () => {
