@@ -4,7 +4,7 @@ export default function TabLayout() {
   return (
     <NativeTabs tintColor="#EA575F" backgroundColor="#000">
       <NativeTabs.Trigger name="home">
-        <Icon sf={{ default: "cube", selected: "cube.fill" }} />
+        <Icon sf={{ default: "house", selected: "house.fill" }} />
         <Label>Track</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="scan">
