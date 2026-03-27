@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BlurHeader from '@/components/BlurHeader';
 import { supabase } from '@/lib/supabase';
 import { siloSocket } from '@/services/websocket';
-import SiloMap from '@/components/SiloMap';
+import SiloMap from '@/components/SiloMapRectangle';
 
 // ── Types ───────────────────────────────────────────────────
 type HeatPoint = { x: number; y: number; z: number; temp: number; humidity: number };
