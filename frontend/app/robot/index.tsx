@@ -73,6 +73,41 @@ function getTempStatus(temp: number): { label: string; color: string } {
   return { label: 'Safe', color: '#4CAF50' };
 }
 
+type SessionSummary = {
+  duration: string;
+  avgTemp: number;
+  maxTemp: number;
+  avgHumidity: number;
+  avgAQ: number;
+  maxAQ: number;
+  cellsVisited: number;
+  totalCells: number;
+  efficiency: string;
+};
+
+function buildSummary(cells: Cell[], deployStartMs: number | null): SessionSummary {
+  const visited = cells.filter(c => c.status !== 'pending');
+  const temps = visited.filter(c => c.avg_temp != null).map(c => c.avg_temp!);
+  const hums  = visited.filter(c => c.avg_humidity != null).map(c => c.avg_humidity!);
+  const aqs   = visited.filter(c => c.avg_air_quality != null).map(c => c.avg_air_quality!);
+  const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const durationMs = deployStartMs ? Date.now() - deployStartMs : 0;
+  const totalMin = durationMs / 60000;
+  const mins = Math.floor(totalMin);
+  const secs = Math.round((totalMin - mins) * 60);
+  return {
+    duration: `${mins}m ${secs}s`,
+    avgTemp: avg(temps),
+    maxTemp: temps.length ? Math.max(...temps) : 0,
+    avgHumidity: avg(hums),
+    avgAQ: avg(aqs),
+    maxAQ: aqs.length ? Math.max(...aqs) : 0,
+    cellsVisited: visited.length,
+    totalCells: cells.length,
+    efficiency: totalMin > 0 ? (visited.length / totalMin).toFixed(1) : '—',
+  };
+}
+
 export default function RobotScreen() {
   const insets = useSafeAreaInsets();
   const [points, setPoints] = useState<HeatPoint[]>([]);
@@ -89,6 +124,14 @@ export default function RobotScreen() {
   const [newWidth, setNewWidth] = useState('');
   const [newHeight, setNewHeight] = useState('');
   const [newDiameter, setNewDiameter] = useState('');
+  const [aqDetailVisible, setAqDetailVisible] = useState(false);
+  const [tempDetailVisible, setTempDetailVisible] = useState(false);
+  const [humDetailVisible, setHumDetailVisible] = useState(false);
+  const [hideWarnings, setHideWarnings] = useState(false);
+  const [dangerLog, setDangerLog] = useState<{ time: string; message: string; color: string }[]>([]);
+  const deployStartRef = useRef<number | null>(null);
+  const [summaryVisible, setSummaryVisible] = useState(false);
+  const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null);
 
   // Compute averages from visited cells (avg_* fields set by server after each cell_complete)
   const avgTemp = useMemo(() => {
@@ -115,6 +158,9 @@ export default function RobotScreen() {
   // Auto-reset to idle when 100% coverage is reached
   useEffect(() => {
     if (progressPct === 100 && isDeployed && cells.length > 0) {
+      const summary = buildSummary(cells, deployStartRef.current);
+      setSessionSummary(summary);
+      setSummaryVisible(true);
       setIsDeployed(false);
       if (deploymentIdRef.current) {
         supabase.from('deployments')
@@ -124,6 +170,7 @@ export default function RobotScreen() {
         setDeploymentId(null);
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progressPct, isDeployed, cells.length]);
 
   // Fetch hangar and cells from DB
@@ -242,6 +289,24 @@ export default function RobotScreen() {
               : c
           )
         );
+        // Append to danger / warning log
+        if (color === 'red' || color === 'yellow') {
+          const reasons: string[] = [];
+          if ((avg_temp ?? 0) > 35)       reasons.push(`Temp ${(avg_temp ?? 0).toFixed(1)}°C`);
+          else if ((avg_temp ?? 0) > 28)  reasons.push(`Warm ${(avg_temp ?? 0).toFixed(1)}°C`);
+          if ((avg_humidity ?? 0) > 85)   reasons.push(`Humidity ${(avg_humidity ?? 0).toFixed(0)}%`);
+          else if ((avg_humidity ?? 0) > 70) reasons.push(`Humidity ${(avg_humidity ?? 0).toFixed(0)}%`);
+          if ((avg_air_quality ?? 0) > 3000)      reasons.push(`Air ${(avg_air_quality ?? 0).toFixed(0)} ppm`);
+          else if ((avg_air_quality ?? 0) > 2000) reasons.push(`Air ${(avg_air_quality ?? 0).toFixed(0)} ppm`);
+          if (reasons.length > 0) {
+            const logColor = color === 'red' ? '#EA575F' : '#FFA500';
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            setDangerLog(prev => [
+              { time, message: `${color === 'red' ? 'Danger' : 'Warning'}: ${reasons.join(', ')} — Cell (${x},${y})`, color: logColor },
+              ...prev,
+            ].slice(0, 30));
+          }
+        }
       }
 
       // 3. Mission complete notification
@@ -287,12 +352,17 @@ export default function RobotScreen() {
     setCells(prev => prev.map(c => ({ ...c, status: 'pending', avg_temp: undefined, avg_humidity: undefined })));
     setDeploymentId(dep.id);
     deploymentIdRef.current = dep.id;
+    deployStartRef.current = Date.now();
+    setDangerLog([]);
     setIsDeployed(true);
     siloSocket.sendCommand('deploy');
     Alert.alert('Deployed', 'Robot deployed. Trail will appear as cells are visited.');
   };
 
   const handleRecall = async () => {
+    const summary = buildSummary(cells, deployStartRef.current);
+    setSessionSummary(summary);
+    setSummaryVisible(true);
     siloSocket.sendCommand('recall');
     if (deploymentIdRef.current) {
       await supabase.from('deployments')
@@ -302,7 +372,6 @@ export default function RobotScreen() {
     setIsDeployed(false);
     setDeploymentId(null);
     deploymentIdRef.current = null;
-    Alert.alert('Recalled', 'Robot has been recalled.');
   };
 
   const handleResize = async (dimA = newWidth, dimB = newHeight, diamStr = newDiameter) => {
@@ -485,6 +554,155 @@ export default function RobotScreen() {
         </Pressable>
       </Modal>
 
+      {/* Temperature Detail Modal */}
+      <Modal
+        visible={tempDetailVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTempDetailVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setTempDetailVisible(false)}>
+          <Pressable style={[styles.modalCard, { gap: 14 }]} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Temperature</Text>
+            <Text style={styles.modalSubtitle}>Average across all visited cells in this session.</Text>
+            <View style={{ backgroundColor: '#0D0305', borderRadius: 16, padding: 16, alignItems: 'center', gap: 4 }}>
+              <Text style={{ color: '#8E8E93', fontSize: 12 }}>Session Average</Text>
+              <Text style={{ color: tempStatus.color, fontSize: 42, fontWeight: '700' }}>
+                {avgTemp > 0 ? avgTemp.toFixed(1) : '—'}
+              </Text>
+              <Text style={{ color: tempStatus.color, fontSize: 14 }}>°C  ·  {tempStatus.label}</Text>
+            </View>
+            {([
+              { range: '≤ 28°C', label: 'Safe', color: '#4CAF50' },
+              { range: '28 – 35°C', label: 'Warm — Monitor', color: '#FFA500' },
+              { range: '> 35°C', label: 'High — Risk of spoilage', color: '#EA575F' },
+            ] as const).map(row => (
+              <View key={row.range} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#2C2C2E' }}>
+                <View style={[styles.alertDot, { backgroundColor: row.color }]} />
+                <Text style={{ color: '#ccc', fontSize: 13, flex: 1 }}>{row.range}</Text>
+                <Text style={{ color: row.color, fontSize: 13, fontWeight: '600' }}>{row.label}</Text>
+              </View>
+            ))}
+            <Pressable style={[styles.modalConfirm, { marginTop: 4 }]} onPress={() => setTempDetailVisible(false)}>
+              <Text style={styles.modalConfirmText}>Close</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Humidity Detail Modal */}
+      <Modal
+        visible={humDetailVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setHumDetailVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setHumDetailVisible(false)}>
+          <Pressable style={[styles.modalCard, { gap: 14 }]} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Humidity</Text>
+            <Text style={styles.modalSubtitle}>Relative humidity percentage measured at each cell.</Text>
+            <View style={{ backgroundColor: '#0D0305', borderRadius: 16, padding: 16, alignItems: 'center', gap: 4 }}>
+              <Text style={{ color: '#8E8E93', fontSize: 12 }}>Session Average</Text>
+              <Text style={{ color: avgHumidity > 85 ? '#EA575F' : avgHumidity > 70 ? '#FFA500' : '#4CAF50', fontSize: 42, fontWeight: '700' }}>
+                {avgHumidity > 0 ? avgHumidity.toFixed(0) : '—'}
+              </Text>
+              <Text style={{ color: avgHumidity > 85 ? '#EA575F' : avgHumidity > 70 ? '#FFA500' : '#4CAF50', fontSize: 14 }}>%  ·  {avgHumidity > 85 ? 'High' : avgHumidity > 70 ? 'Elevated' : 'Normal'}</Text>
+            </View>
+            {([
+              { range: '≤ 70%', label: 'Normal', color: '#4CAF50' },
+              { range: '70 – 85%', label: 'Elevated — Mould Risk', color: '#FFA500' },
+              { range: '> 85%', label: 'High — Danger', color: '#EA575F' },
+            ] as const).map(row => (
+              <View key={row.range} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#2C2C2E' }}>
+                <View style={[styles.alertDot, { backgroundColor: row.color }]} />
+                <Text style={{ color: '#ccc', fontSize: 13, flex: 1 }}>{row.range}</Text>
+                <Text style={{ color: row.color, fontSize: 13, fontWeight: '600' }}>{row.label}</Text>
+              </View>
+            ))}
+            <Pressable style={[styles.modalConfirm, { marginTop: 4 }]} onPress={() => setHumDetailVisible(false)}>
+              <Text style={styles.modalConfirmText}>Close</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Air Quality Detail Modal */}
+      <Modal
+        visible={aqDetailVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAqDetailVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setAqDetailVisible(false)}>
+          <Pressable style={[styles.modalCard, { gap: 14 }]} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Air Quality Index</Text>
+            <Text style={styles.modalSubtitle}>Measured in ppm (parts per million) by the onboard gas sensor.</Text>
+            {/* Current reading */}
+            <View style={{ backgroundColor: '#0D0305', borderRadius: 16, padding: 16, alignItems: 'center', gap: 4 }}>
+              <Text style={{ color: '#8E8E93', fontSize: 12 }}>Current Session Average</Text>
+              <Text style={{ color: airStatus.color, fontSize: 42, fontWeight: '700' }}>
+                {avgAirQuality > 0 ? avgAirQuality.toFixed(0) : '—'}
+              </Text>
+              <Text style={{ color: airStatus.color, fontSize: 14 }}>ppm  ·  {airStatus.label}</Text>
+            </View>
+            {/* Threshold table */}
+            {([
+              { range: '< 1000 ppm', label: 'Fresh Air', color: '#4CAF50' },
+              { range: '1000 – 2000 ppm', label: 'Acceptable', color: '#8E8E93' },
+              { range: '2000 – 3000 ppm', label: 'Poor — Drowsiness Risk', color: '#FFA500' },
+              { range: '> 3000 ppm', label: 'Hazardous', color: '#EA575F' },
+            ] as const).map(row => (
+              <View key={row.range} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#2C2C2E' }}>
+                <View style={[styles.alertDot, { backgroundColor: row.color }]} />
+                <Text style={{ color: '#ccc', fontSize: 13, flex: 1 }}>{row.range}</Text>
+                <Text style={{ color: row.color, fontSize: 13, fontWeight: '600' }}>{row.label}</Text>
+              </View>
+            ))}
+            <Pressable style={[styles.modalConfirm, { marginTop: 4 }]} onPress={() => setAqDetailVisible(false)}>
+              <Text style={styles.modalConfirmText}>Close</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Session Summary Modal */}
+      <Modal
+        visible={summaryVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSummaryVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setSummaryVisible(false)}>
+          <Pressable style={[styles.modalCard, { gap: 12 }]} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Session Summary</Text>
+            {sessionSummary && (
+              <>
+                {([
+                  { label: 'Duration', value: sessionSummary.duration },
+                  { label: 'Cells Covered', value: `${sessionSummary.cellsVisited} / ${sessionSummary.totalCells}` },
+                  { label: 'Efficiency', value: `${sessionSummary.efficiency} cells/min` },
+                  { label: 'Avg. Temp', value: sessionSummary.avgTemp > 0 ? `${sessionSummary.avgTemp.toFixed(1)}°C` : '—' },
+                  { label: 'Max Temp', value: sessionSummary.maxTemp > 0 ? `${sessionSummary.maxTemp.toFixed(1)}°C` : '—',
+                    color: sessionSummary.maxTemp > 35 ? '#EA575F' : sessionSummary.maxTemp > 28 ? '#FFA500' : '#4CAF50' },
+                  { label: 'Avg. Humidity', value: sessionSummary.avgHumidity > 0 ? `${sessionSummary.avgHumidity.toFixed(0)}%` : '—' },
+                  { label: 'Avg. Air Quality', value: sessionSummary.avgAQ > 0 ? `${sessionSummary.avgAQ.toFixed(0)} ppm` : '—' },
+                  { label: 'Max Air Quality', value: sessionSummary.maxAQ > 0 ? `${sessionSummary.maxAQ.toFixed(0)} ppm` : '—',
+                    color: sessionSummary.maxAQ > 3000 ? '#EA575F' : sessionSummary.maxAQ > 2000 ? '#FFA500' : '#4CAF50' },
+                ] as { label: string; value: string; color?: string }[]).map(row => (
+                  <View key={row.label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#2C2C2E' }}>
+                    <Text style={{ color: '#8E8E93', fontSize: 14 }}>{row.label}</Text>
+                    <Text style={{ color: row.color ?? '#fff', fontSize: 14, fontWeight: '600' }}>{row.value}</Text>
+                  </View>
+                ))}
+              </>
+            )}
+            <Pressable style={[styles.modalConfirm, { marginTop: 4 }]} onPress={() => setSummaryVisible(false)}>
+              <Text style={styles.modalConfirmText}>Done</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Resize Hangar Modal */}
       <Modal
         visible={resizeVisible}
@@ -643,32 +861,70 @@ export default function RobotScreen() {
 
         {/* Stat cards */}
         <View style={styles.statRow}>
-          <View style={styles.statCard}>
+          <TouchableOpacity style={styles.statCard} activeOpacity={0.7} onPress={() => setTempDetailVisible(true)}>
             <Text style={styles.statLabel}>Avg. Temp</Text>
             <Text style={[styles.statValue, { color: tempStatus.color }]}>
               {avgTemp > 0 ? avgTemp.toFixed(1) : '—'}°C
             </Text>
             <Text style={[styles.statSub, { color: tempStatus.color }]}>
-              {tempStatus.label}
+              {tempStatus.label} ›
             </Text>
-          </View>
-          <View style={styles.statCard}>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.statCard} activeOpacity={0.7} onPress={() => setHumDetailVisible(true)}>
             <Text style={styles.statLabel}>Avg. Humidity</Text>
             <Text style={[styles.statValue, { color: avgHumidity > 85 ? '#EA575F' : avgHumidity > 70 ? '#FFA500' : avgHumidity > 0 ? '#4CAF50' : '#8E8E93' }]}>
               {avgHumidity > 0 ? avgHumidity.toFixed(0) : '—'}%
             </Text>
-            <Text style={styles.statSub}>Relative Humidity</Text>
-          </View>
-          <View style={styles.statCard}>
+            <Text style={[styles.statSub, { color: avgHumidity > 85 ? '#EA575F' : avgHumidity > 70 ? '#FFA500' : avgHumidity > 0 ? '#4CAF50' : '#8E8E93' }]}>
+              {avgHumidity > 85 ? 'High ›' : avgHumidity > 70 ? 'Elevated ›' : avgHumidity > 0 ? 'Normal ›' : 'No data'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.statCard} activeOpacity={0.7} onPress={() => setAqDetailVisible(true)}>
             <Text style={styles.statLabel}>Air Quality</Text>
             <Text style={[styles.statValue, { color: airStatus.color }]}>
               {avgAirQuality > 0 ? avgAirQuality.toFixed(0) : '—'}
             </Text>
             <Text style={[styles.statSub, { color: airStatus.color }]}>
-              {airStatus.label}
+              {airStatus.label} ›
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
+
+        {/* Danger / Warning Alert Log */}
+        {dangerLog.length > 0 && (
+          <View style={styles.alertsCard}>
+            {/* Header row */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.controlTitle}>Alerts</Text>
+              <TouchableOpacity
+                onPress={() => setHideWarnings(h => !h)}
+                style={{ backgroundColor: '#2C2C2E', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5 }}
+              >
+                <Text style={{ color: hideWarnings ? '#FFA500' : '#8E8E93', fontSize: 12, fontWeight: '600' }}>
+                  {hideWarnings ? 'Show Warnings' : 'Hide Warnings'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {/* Fixed-height scrollable log */}
+            <ScrollView
+              style={{ maxHeight: 200 }}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              {dangerLog
+                .filter(e => !(hideWarnings && e.color === '#FFA500'))
+                .map((entry, i) => (
+                  <View key={i} style={[styles.alertRow, { marginBottom: 10 }]}>
+                    <View style={[styles.alertDot, { backgroundColor: entry.color }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: entry.color, fontSize: 12, fontWeight: '600' }}>{entry.time}</Text>
+                      <Text style={{ color: '#ccc', fontSize: 13 }}>{entry.message}</Text>
+                    </View>
+                  </View>
+                ))}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Control Deck */}
         <View style={styles.controlCard}>
@@ -771,6 +1027,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   recallBtnText: { color: '#8E8E93', fontSize: 16, fontWeight: '600' },
+
+  // Alerts log
+  alertsCard: {
+    backgroundColor: '#141414',
+    borderRadius: 26,
+    padding: 18,
+    gap: 12,
+  },
+  alertRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  alertDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 4,
+  },
 
   // Android prompt modal
   modalOverlay: {
