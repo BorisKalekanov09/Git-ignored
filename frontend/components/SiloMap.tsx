@@ -278,33 +278,40 @@ const SiloMap = ({
   const composedGesture = Gesture.Simultaneous(pinchGesture, panGesture);
 
   return (
-    <GestureDetector gesture={composedGesture}>
-      <View style={[styles.container, { width: canvasWidth, height: canvasHeight }]}>
-        <Canvas
-          camera={{ position: [camX, camY, camZ], fov, near: 0.1, far: 300 }}
-        >
-          <color attach="background" args={['#0D0305']} />
-          <ambientLight intensity={0.6} />
-          <directionalLight position={[4, 10, 6]}  intensity={1.8} />
-          <directionalLight position={[-3, 5, -4]} intensity={0.4} />
-          <CameraController
-            baseCamY={camY}
-            baseCamZ={camZ}
-            zoomRef={zoomRef}
-            targetRef={targetRef}
-          />
-          <BarnScene
-            data={points}
-            cells={cells}
-            longSide={longSide}
-            shortSide={shortSide}
-            boxH={boxH}
-            swapped={swapped}
-            startingCellId={startingCellId}
-          />
-        </Canvas>
-      </View>
-    </GestureDetector>
+    <View style={[styles.container, { width: canvasWidth, height: canvasHeight }]}>
+      <Canvas
+        camera={{ position: [camX, camY, camZ], fov, near: 0.1, far: 300 }}
+      >
+        <color attach="background" args={['#0D0305']} />
+        <ambientLight intensity={0.6} />
+        <directionalLight position={[4, 10, 6]}  intensity={1.8} />
+        <directionalLight position={[-3, 5, -4]} intensity={0.4} />
+        <CameraController
+          baseCamY={camY}
+          baseCamZ={camZ}
+          zoomRef={zoomRef}
+          targetRef={targetRef}
+        />
+        <BarnScene
+          data={points}
+          cells={cells}
+          longSide={longSide}
+          shortSide={shortSide}
+          boxH={boxH}
+          swapped={swapped}
+          startingCellId={startingCellId}
+        />
+      </Canvas>
+      {/* Transparent overlay — must be a sibling AFTER Canvas, not a wrapper.
+          On Android the Canvas intercepts native touches before RNGH can fire
+          when it's a child of the GestureDetector. An absolute-fill View
+          rendered on top captures all touches first.
+          collapsable={false} is required on Android: without it the OS
+          collapses empty Views and they never receive touch events. */}
+      <GestureDetector gesture={composedGesture}>
+        <View style={StyleSheet.absoluteFill} collapsable={false} />
+      </GestureDetector>
+    </View>
   );
 };
 
