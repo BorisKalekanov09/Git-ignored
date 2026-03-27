@@ -477,7 +477,19 @@ void loop() {
       driveQueueIdx++;
       startNextPhase();
     } else {
-        driveStraight(0.0f, currentTurnDir);
+      // Proportional reduction in turn speed to prevent inertia overshoot
+      float remDeg = fabsf(remaining * 180.0f / PI);
+      int speed = TURN_SPEED;
+      
+      // If we are within 30 degrees of the target, start slowing down
+      if (remDeg < 30.0f) {
+        // map remaining degrees from (0 to 30) into Motor Speed (100 to TURN_SPEED)
+        // 100 is chosen as a safe minimum speed to guarantee it overcomes static friction
+        speed = 100 + (int)((remDeg / 30.0f) * (TURN_SPEED - 100));
+      }
+      
+      if (currentTurnDir > 0) motors(speed, -speed);
+      else                    motors(-speed, speed);
     }
     break;
   }
