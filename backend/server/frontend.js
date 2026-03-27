@@ -34,10 +34,10 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
   // Helpers
   // ─────────────────────────────────────────────────────────────────
 
-  function cellStatus(avgTemp) {
-    if (avgTemp >= 35) return { status: 'danger',  color: 'red'    };
-    if (avgTemp >= 28) return { status: 'warning', color: 'yellow' };
-    return              { status: 'safe',    color: 'green'  };
+  function cellStatus(avgTemp, avgHum, avgAir) {
+    if (avgTemp >= 35 || avgHum >= 85 || avgAir > 3000) return { status: 'danger',  color: 'red'    };
+    if (avgTemp >= 28 || avgHum >= 70 || avgAir > 2000) return { status: 'warning', color: 'yellow' };
+    return                                                       { status: 'safe',    color: 'green'  };
   }
 
   const CELL_SIZE_CM = 20.0; // 20cm × 20cm per cell
@@ -75,8 +75,19 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     const result = [];
     orderedRows.forEach((rowKey, rowNum) => {
       const rowCells = [...rowMap[rowKey]].sort((a, b) => a.index_x - b.index_x);
-      // Even rows → left to right, odd rows → right to left (snake)
-      const ordered = rowNum % 2 === 0 ? rowCells : rowCells.reverse();
+      let ordered;
+      if (rowNum === 0) {
+        // Start from startCell.index_x: go right to end, then sweep back over cells to the left
+        const si = rowCells.findIndex(c => c.index_x === startCell.index_x);
+        if (si > 0) {
+          ordered = [...rowCells.slice(si), ...rowCells.slice(0, si).reverse()];
+        } else {
+          ordered = rowCells;
+        }
+      } else {
+        // Even rows → left to right, odd rows → right to left (snake)
+        ordered = rowNum % 2 === 0 ? rowCells : rowCells.reverse();
+      }
       result.push(...ordered);
     });
     return result;
@@ -98,7 +109,7 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     // Order by created_at desc to always pick the latest hangar
     const { data: hData, error: hErr } = await supabase
       .from('hangars')
-      .select('id, width, height')
+      .select('id, width, height, starting_cell_id')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -139,23 +150,28 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
 
     console.log(`[Mission] ${allCells.length} cells loaded.`);
 
-    // Find starting cell — pick the cell closest to (0,0) as default
-    // (The user can override this via the app's "Set Starting Position" button
-    //  if the hangars table supports starting_cell_id; otherwise we default.)
+    // Find starting cell from starting_cell_id, fallback to (0,0)
     let startCell = { index_x: 0, index_y: 0 };
-    // Try starting_cell_id if the column exists on hData
     if (hData.starting_cell_id) {
       const sc = allCells.find(c => c.id === hData.starting_cell_id);
       if (sc) {
         startCell = { index_x: sc.index_x, index_y: sc.index_y };
+        console.log(`[Mission] Starting from cell set in app: (${sc.index_x}, ${sc.index_y})`);
+      } else {
+        console.warn('[Mission] starting_cell_id not found in cells — defaulting to (0,0)');
       }
+    } else {
+      console.log('[Mission] No starting_cell_id set — defaulting to (0,0)');
     }
-    console.log(`[Mission] Starting cell: (${startCell.index_x}, ${startCell.index_y})`);
 
     // Build snake path
     mission.cells   = buildSnakeOrder(allCells, startCell);
     mission.idx     = 0;
     mission.running = true;
+    // Store start position so recall can navigate the robot home
+    const startCm = cellToCm(startCell);
+    mission.startX  = startCm.x_cm;
+    mission.startY  = startCm.y_cm;
 
     console.log(`[Mission] Snake path: ${mission.cells.length} cells`);
     console.log(`[Mission] First 5: ${mission.cells.slice(0, 5).map(c => `(${c.index_x},${c.index_y})`).join(' → ')}`);
@@ -181,14 +197,20 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     const avgAir  = parseFloat(air_quality) || 0;
     const digAir  = parseInt(air_digital)   || 0;
 
-    const { status, color } = cellStatus(avgTemp);
-    console.log(`[Mission] ✅ Cell (${cell.index_x},${cell.index_y}) complete — temp=${avgTemp.toFixed(1)}°C → ${status}`);
+    const { status, color } = cellStatus(avgTemp, avgHum, avgAir);
+    console.log(`[Mission] ✅ Cell (${cell.index_x},${cell.index_y}) complete — temp=${avgTemp.toFixed(1)}°C hum=${avgHum}% air=${avgAir} → ${status}`);
 
-    // Update Supabase
+    // Update Supabase — store avg sensor readings alongside status
     if (mission.hangarId) {
       const { error } = await supabase
         .from('cells')
-        .update({ status, last_visited_at: new Date().toISOString() })
+        .update({
+          status,
+          avg_temp:        avgTemp,
+          avg_humidity:    avgHum,
+          avg_air_quality: avgAir,
+          last_visited_at: new Date().toISOString(),
+        })
         .match({ hangar_id: mission.hangarId, index_x: cell.index_x, index_y: cell.index_y });
 
       if (error) console.error('[Mission] Cell update error:', JSON.stringify(error));
@@ -205,17 +227,17 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
       longitude:   data.x_cm ?? null,
     }]);
 
-    // Notify frontend with color
+    // Notify frontend
     broadcastData({
-      type:         'cell_updated',
-      x:            cell.index_x,
-      y:            cell.index_y,
+      type:            'cell_updated',
+      x:               cell.index_x,
+      y:               cell.index_y,
       status,
       color,
-      avg_temp:     avgTemp,
-      avg_humidity: avgHum,
-      avg_air:      avgAir,
-      dig_air:      digAir,
+      avg_temp:        avgTemp,
+      avg_humidity:    avgHum,
+      avg_air_quality: avgAir,
+      dig_air:         digAir,
     });
 
     // Advance
@@ -240,6 +262,11 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     mission.cells   = [];
     mission.idx     = 0;
     broadcastData({ type: 'command', action: 'recall' });
+    // Send robot back to starting position
+    if (mission.startX !== undefined && mission.startY !== undefined) {
+      console.log(`[Mission] Sending robot home: x_cm=${mission.startX} y_cm=${mission.startY}`);
+      setTimeout(() => broadcastData({ type: 'goto', x_cm: mission.startX, y_cm: mission.startY }), 100);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -260,6 +287,15 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
 
     // Send current snapshot immediately
     ws.send(JSON.stringify({ type: 'sensor_data', data: latestSensorData }));
+
+    // If a mission is running and a robot just connected mid-mission,
+    // re-send the current goto so it doesn't get stuck waiting
+    if (mission.running && mission.cells[mission.idx]) {
+      const c = mission.cells[mission.idx];
+      const { x_cm, y_cm } = cellToCm(c);
+      console.log(`[Mission] New client connected mid-mission — resending GOTO (${c.index_x},${c.index_y})`);
+      ws.send(JSON.stringify({ type: 'goto', x_cm, y_cm }));
+    }
 
     ws.on('message', async (raw) => {
       let data;

@@ -5,7 +5,17 @@ import * as THREE from 'three';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 
 type HeatPoint = { x: number; y: number; z: number; temp: number };
-type Cell = { id: string; hangar_id: string; index_x: number; index_y: number; status: string; last_visited_at: string | null };
+type Cell = {
+  id: string;
+  hangar_id: string;
+  index_x: number;
+  index_y: number;
+  status: string;
+  last_visited_at: string | null;
+  avg_temp?: number;
+  avg_humidity?: number;
+  avg_air_quality?: number;
+};
 type Hangar = { id: string; width: number; height: number };
 
 const SCALE = 2;
@@ -21,19 +31,42 @@ function CellTile({
 }: {
   cell: Cell; longSide: number; shortSide: number; swapped: boolean; isStart: boolean;
 }) {
+  // Derive effective status from sensor averages if available, else use DB status
+  let effectiveStatus = cell.status;
+  if (cell.status !== 'pending' && cell.status !== 'active') {
+    const t = cell.avg_temp;
+    const h = cell.avg_humidity;
+    const aq = cell.avg_air_quality;
+    if (
+      (t !== undefined && t > 35) ||
+      (h !== undefined && h > 85) ||
+      (aq !== undefined && aq > 3000)
+    ) {
+      effectiveStatus = 'danger';
+    } else if (
+      (t !== undefined && t > 28) ||
+      (h !== undefined && h > 70) ||
+      (aq !== undefined && aq > 2000)
+    ) {
+      effectiveStatus = 'warning';
+    } else if (cell.status !== 'pending') {
+      effectiveStatus = 'safe';
+    }
+  }
+
   const color = isStart
     ? '#FFFFFF'
-    : cell.status === 'danger'    ? '#EA575F'
-    : cell.status === 'warning'   ? '#FFA500'
-    : (cell.status === 'safe' || cell.status === 'completed') ? '#4CAF50'
-    : cell.status === 'active'    ? '#00D5FF' : '#1A0A0B';
+    : effectiveStatus === 'danger'  ? '#EA575F'
+    : effectiveStatus === 'warning' ? '#FFA500'
+    : (effectiveStatus === 'safe' || effectiveStatus === 'completed') ? '#4CAF50'
+    : effectiveStatus === 'active'  ? '#00D5FF' : '#1A0A0B';
 
   const emissive = isStart
     ? '#FFFFFF'
-    : cell.status === 'danger'    ? '#7a1a20'
-    : cell.status === 'warning'   ? '#8a5a00'
-    : (cell.status === 'safe' || cell.status === 'completed') ? '#1b4d1d'
-    : cell.status === 'active'    ? '#006688' : '#000000';
+    : effectiveStatus === 'danger'  ? '#7a1a20'
+    : effectiveStatus === 'warning' ? '#8a5a00'
+    : (effectiveStatus === 'safe' || effectiveStatus === 'completed') ? '#1b4d1d'
+    : effectiveStatus === 'active'  ? '#006688' : '#000000';
 
   const emissiveIntensity = isStart ? 1.2 : 0.6;
 

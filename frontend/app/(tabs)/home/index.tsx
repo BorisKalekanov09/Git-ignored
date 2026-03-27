@@ -8,6 +8,11 @@ import { supabase } from "@/lib/supabase";
 import { useCameraPermissions } from "expo-camera";
 
 type Robot = { id: string; bot_id: string; linked_at: string };
+type DeploymentInfo = {
+  isActive: boolean;
+  progress: number; // 0–1
+  startedAt: string | null;
+};
 
 const HomeScreen = () => {
   const insets = useSafeAreaInsets();
@@ -15,21 +20,64 @@ const HomeScreen = () => {
   const { height: screenHeight } = useWindowDimensions();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [robots, setRobots] = useState<Robot[]>([]);
+  const [deploymentInfo, setDeploymentInfo] = useState<DeploymentInfo>({
+    isActive: false,
+    progress: 0,
+    startedAt: null,
+  });
 
-  // Reload robots every time this tab comes into focus (e.g. after scanning)
+  // Reload robots + deployment every time this tab comes into focus
   useFocusEffect(
     useCallback(() => {
-      const loadRobots = async () => {
+      const loadData = async () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
-        const { data } = await supabase
+
+        // Robots
+        const { data: robotData } = await supabase
           .from('robots')
           .select('id, bot_id, linked_at')
           .eq('user_id', user.id)
           .order('linked_at', { ascending: false });
-        if (data) setRobots(data);
+        if (robotData) setRobots(robotData);
+
+        // Hangar for this user
+        const { data: hangar } = await supabase
+          .from('hangars')
+          .select('id')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!hangar) return;
+
+        // Latest deployment (active first, else most recent)
+        const { data: dep } = await supabase
+          .from('deployments')
+          .select('status, started_at')
+          .eq('hangar_id', hangar.id)
+          .order('started_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Cell coverage
+        const { data: cells } = await supabase
+          .from('cells')
+          .select('status')
+          .eq('hangar_id', hangar.id);
+
+        const total = cells?.length ?? 0;
+        const visited = cells?.filter(c => c.status !== 'pending').length ?? 0;
+
+        setDeploymentInfo({
+          isActive: dep?.status === 'active',
+          progress: total > 0 ? visited / total : 0,
+          startedAt: dep?.started_at ?? null,
+        });
       };
-      loadRobots();
+
+      loadData();
     }, [])
   );
 
@@ -71,9 +119,10 @@ const HomeScreen = () => {
             robots.map((robot) => (
               <RobotStatus
                 key={robot.id}
-                isWorking={true}
+                isWorking={deploymentInfo.isActive}
+                progress={deploymentInfo.progress}
+                startTime={deploymentInfo.startedAt}
                 title={robot.bot_id}
-                startTime={new Date(robot.linked_at).toLocaleString()}
                 onPress={() => handleRobotPress(robot)}
               />
             ))

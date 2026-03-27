@@ -42,6 +42,7 @@ type Cell = {
   color?: string;       // 'green' | 'yellow' | 'red' — from server cell_updated
   avg_temp?: number;
   avg_humidity?: number;
+  avg_air_quality?: number;
 };
 type Hangar = { id: string; shape?: 'circle' | 'rectangle'; width: number; height: number; diameter?: number; starting_cell_id?: string | null };
 const SURFACE_Y = 2.9;
@@ -80,15 +81,48 @@ export default function RobotScreen() {
   const [promptVisible, setPromptVisible] = useState(false);
   const [promptText, setPromptText] = useState('');
   const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [isDeployed, setIsDeployed] = useState(false);
+  const [deploymentId, setDeploymentId] = useState<string | null>(null);
+  const deploymentIdRef = useRef<string | null>(null);
+  const [resizeVisible, setResizeVisible] = useState(false);
+  const [newWidth, setNewWidth] = useState('');
+  const [newHeight, setNewHeight] = useState('');
 
-  const latestTemp = useMemo(
-    () => (points.length > 0 ? points[points.length - 1].temp : 0),
-    [points]
-  );
+  // Compute averages from visited cells (avg_* fields set by server after each cell_complete)
+  const avgTemp = useMemo(() => {
+    const visited = cells.filter(c => c.avg_temp != null);
+    if (!visited.length) return 0;
+    return visited.reduce((s, c) => s + (c.avg_temp ?? 0), 0) / visited.length;
+  }, [cells]);
 
-  const completedCount = cells.filter((c) => c.status === 'completed').length;
-  const progressPct =
-    cells.length > 0 ? Math.round((completedCount / cells.length) * 100) : 0;
+  const avgHumidity = useMemo(() => {
+    const visited = cells.filter(c => c.avg_humidity != null);
+    if (!visited.length) return 0;
+    return visited.reduce((s, c) => s + (c.avg_humidity ?? 0), 0) / visited.length;
+  }, [cells]);
+
+  const avgAirQuality = useMemo(() => {
+    const visited = cells.filter(c => c.avg_air_quality != null);
+    if (!visited.length) return 0;
+    return visited.reduce((s, c) => s + (c.avg_air_quality ?? 0), 0) / visited.length;
+  }, [cells]);
+
+  const visitedCount = cells.filter((c) => c.status !== 'pending').length;
+  const progressPct = cells.length > 0 ? Math.round((visitedCount / cells.length) * 100) : 0;
+
+  // Auto-reset to idle when 100% coverage is reached
+  useEffect(() => {
+    if (progressPct === 100 && isDeployed && cells.length > 0) {
+      setIsDeployed(false);
+      if (deploymentIdRef.current) {
+        supabase.from('deployments')
+          .update({ status: 'completed', ended_at: new Date().toISOString() })
+          .eq('id', deploymentIdRef.current);
+        deploymentIdRef.current = null;
+        setDeploymentId(null);
+      }
+    }
+  }, [progressPct, isDeployed, cells.length]);
 
   // Fetch hangar and cells from DB
   useEffect(() => {
@@ -109,6 +143,19 @@ export default function RobotScreen() {
         .order('index_x', { ascending: true });
       if (cData) setCells(cData);
       if (hData.starting_cell_id) setStartingCellId(hData.starting_cell_id);
+
+      // Load active deployment
+      const { data: dData } = await supabase
+        .from('deployments')
+        .select('id')
+        .eq('hangar_id', hData.id)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (dData) {
+        setDeploymentId(dData.id);
+        deploymentIdRef.current = dData.id;
+        setIsDeployed(true);
+      }
     };
 
     loadHangarAndCells();
@@ -121,7 +168,16 @@ export default function RobotScreen() {
         (payload) => {
           setCells((current) =>
             current.map((c) =>
-              c.id === payload.new.id ? { ...c, status: payload.new.status } : c
+              c.id === payload.new.id
+                ? {
+                    ...c,
+                    status: payload.new.status,
+                    avg_temp: payload.new.avg_temp ?? c.avg_temp,
+                    avg_humidity: payload.new.avg_humidity ?? c.avg_humidity,
+                    avg_air_quality: payload.new.avg_air_quality ?? c.avg_air_quality,
+                    last_visited_at: payload.new.last_visited_at,
+                  }
+                : c
             )
           );
         }
@@ -180,11 +236,11 @@ export default function RobotScreen() {
 
       // 2. Real-time Cell status (Real-time path painting)
       if (data.type === 'cell_updated') {
-        const { x, y, status, color, avg_temp, avg_humidity } = data;
+        const { x, y, status, color, avg_temp, avg_humidity, avg_air_quality } = data;
         setCells((current) =>
           current.map((c) =>
             c.index_x === x && c.index_y === y
-              ? { ...c, status, color, avg_temp, avg_humidity }
+              ? { ...c, status, color, avg_temp, avg_humidity, avg_air_quality }
               : c
           )
         );
@@ -192,17 +248,109 @@ export default function RobotScreen() {
 
       // 3. Mission complete notification
       if (data.type === 'mission_complete') {
-        Alert.alert('Mission Complete', '✅ All cells have been scanned!');
+        Alert.alert('Mission Complete', 'All cells have been scanned!');
+        if (deploymentIdRef.current) {
+          supabase.from('deployments')
+            .update({ status: 'completed', ended_at: new Date().toISOString() })
+            .eq('id', deploymentIdRef.current);
+        }
+        setIsDeployed(false);
+        setDeploymentId(null);
+        deploymentIdRef.current = null;
       }
     });
 
     return () => off();
   }, []);
 
-  const tempStatus = getTempStatus(latestTemp);
-  const latestAir = points.length > 0 ? points[points.length - 1].airQuality : 0;
-  const latestAirDig = points.length > 0 ? points[points.length - 1].airDigital : 1;
-  const airStatus = getAirStatus(latestAir, latestAirDig);
+  const tempStatus = getTempStatus(avgTemp);
+  const airStatus = getAirStatus(avgAirQuality, 1);
+
+  const handleDeploy = async () => {
+    if (!hangar) return;
+    const { data: dep, error: depErr } = await supabase
+      .from('deployments')
+      .insert({ hangar_id: hangar.id, status: 'active', started_at: new Date().toISOString() })
+      .select('id')
+      .single();
+    if (depErr) { Alert.alert('Error', depErr.message); return; }
+    // Reset all cells to pending so the trail starts fresh
+    await supabase
+      .from('cells')
+      .update({ status: 'pending', avg_temp: null, avg_humidity: null, avg_air_quality: null, last_visited_at: null })
+      .eq('hangar_id', hangar.id);
+    setCells(prev => prev.map(c => ({ ...c, status: 'pending', avg_temp: undefined, avg_humidity: undefined })));
+    setDeploymentId(dep.id);
+    deploymentIdRef.current = dep.id;
+    setIsDeployed(true);
+    siloSocket.sendCommand('deploy');
+    Alert.alert('Deployed', 'Robot deployed. Trail will appear as cells are visited.');
+  };
+
+  const handleRecall = async () => {
+    siloSocket.sendCommand('recall');
+    if (deploymentIdRef.current) {
+      await supabase.from('deployments')
+        .update({ status: 'recalled', ended_at: new Date().toISOString() })
+        .eq('id', deploymentIdRef.current);
+    }
+    setIsDeployed(false);
+    setDeploymentId(null);
+    deploymentIdRef.current = null;
+    Alert.alert('Recalled', 'Robot has been recalled.');
+  };
+
+  const handleResize = async (widthStr = newWidth, heightStr = newHeight) => {
+    const w = parseFloat(widthStr);
+    const h = parseFloat(heightStr);
+    if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
+      Alert.alert('Invalid dimensions', 'Enter valid width and height in metres.');
+      return;
+    }
+    if (!hangar) return;
+    await supabase.from('hangars').update({ width: w, height: h }).eq('id', hangar.id);
+    await supabase.from('cells').delete().eq('hangar_id', hangar.id);
+    const cellSize = 0.2;
+    const cols = Math.ceil(w / cellSize);
+    const rows = Math.ceil(h / cellSize);
+    const newCells: any[] = [];
+    for (let iy = 0; iy < rows; iy++)
+      for (let ix = 0; ix < cols; ix++)
+        newCells.push({ hangar_id: hangar.id, index_x: ix, index_y: iy, status: 'pending' });
+    await supabase.from('cells').insert(newCells);
+    setHangar(prev => prev ? { ...prev, width: w, height: h } : prev);
+    const { data: cData } = await supabase.from('cells').select('*').eq('hangar_id', hangar.id)
+      .order('index_y', { ascending: true }).order('index_x', { ascending: true });
+    if (cData) setCells(cData);
+    setResizeVisible(false);
+  };
+
+  const promptResize = () => {
+    if (Platform.OS === 'ios') {
+      Alert.prompt(
+        'Resize Hangar',
+        'Enter new width in metres',
+        (widthStr) => {
+          if (!widthStr) return;
+          Alert.prompt(
+            'Resize Hangar',
+            'Enter new height in metres',
+            (heightStr) => { if (heightStr) handleResize(widthStr, heightStr); },
+            'plain-text',
+            hangar ? String(hangar.height ?? '') : '',
+            'decimal-pad',
+          );
+        },
+        'plain-text',
+        hangar ? String(hangar.width ?? '') : '',
+        'decimal-pad',
+      );
+    } else {
+      setNewWidth(hangar ? String(hangar.width ?? '') : '');
+      setNewHeight(hangar ? String(hangar.height ?? '') : '');
+      setResizeVisible(true);
+    }
+  };
 
   const saveStartingPosition = async (raw: string) => {
     const parts = raw.split(',').map((s) => s.trim());
@@ -292,6 +440,47 @@ export default function RobotScreen() {
         </Pressable>
       </Modal>
 
+      {/* Resize Hangar Modal */}
+      <Modal
+        visible={resizeVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setResizeVisible(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setResizeVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <Pressable style={styles.modalCard} onPress={() => {}}>
+              <Text style={styles.modalTitle}>Resize Hangar</Text>
+              <Text style={styles.modalSubtitle}>New dimensions in metres. Grid will be regenerated.</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={newWidth}
+                onChangeText={setNewWidth}
+                keyboardType="decimal-pad"
+                placeholder="Width (m)"
+                placeholderTextColor="#555"
+              />
+              <TextInput
+                style={[styles.modalInput, { marginTop: 10 }]}
+                value={newHeight}
+                onChangeText={setNewHeight}
+                keyboardType="decimal-pad"
+                placeholder="Height (m)"
+                placeholderTextColor="#555"
+              />
+              <View style={styles.modalBtns}>
+                <Pressable style={styles.modalCancel} onPress={() => setResizeVisible(false)}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable style={styles.modalConfirm} onPress={() => handleResize()}>
+                  <Text style={styles.modalConfirmText}>Apply</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
+
       <ScrollView
         scrollEnabled={scrollEnabled}
         contentContainerStyle={[
@@ -304,7 +493,7 @@ export default function RobotScreen() {
           {/* Badge row */}
           <View style={styles.badgeRow}>
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>✈ In Progress</Text>
+              <Text style={styles.badgeText}>{isDeployed ? '▶ Deployed' : 'Idle'}</Text>
             </View>
             <Text style={styles.coverageText}>Coverage: {progressPct}%</Text>
           </View>
@@ -324,11 +513,22 @@ export default function RobotScreen() {
             )}
           </View>
 
-          {/* Starting Position button */}
+          {/* Resize Hangar button */}
+          {hangar && (
+            <TouchableOpacity
+              style={styles.resizeBtn}
+              onPress={promptResize}
+            >
+              <Text style={styles.resizeBtnText}>⤡  Resize Hangar</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Starting Position button — disabled during deployment */}
           {cells.length > 0 && (
             <TouchableOpacity
-              style={styles.startPosBtn}
-              onPress={promptStartingPosition}
+              style={[styles.startPosBtn, isDeployed && { opacity: 0.4 }]}
+              onPress={isDeployed ? undefined : promptStartingPosition}
+              activeOpacity={isDeployed ? 1 : 0.7}
             >
               <Text style={styles.startPosBtnText}>
                 {startingCellId
@@ -387,7 +587,7 @@ export default function RobotScreen() {
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Avg. Temp</Text>
             <Text style={[styles.statValue, { color: tempStatus.color }]}>
-              {(latestTemp ?? 0).toFixed(1)}°C
+              {avgTemp > 0 ? avgTemp.toFixed(1) : '—'}°C
             </Text>
             <Text style={[styles.statSub, { color: tempStatus.color }]}>
               {tempStatus.label}
@@ -395,15 +595,15 @@ export default function RobotScreen() {
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Avg. Humidity</Text>
-            <Text style={styles.statValue}>
-              {points.length > 0 ? (points[points.length - 1].humidity ?? 0).toFixed(0) : "0"}%
+            <Text style={[styles.statValue, { color: avgHumidity > 85 ? '#EA575F' : avgHumidity > 70 ? '#FFA500' : avgHumidity > 0 ? '#4CAF50' : '#8E8E93' }]}>
+              {avgHumidity > 0 ? avgHumidity.toFixed(0) : '—'}%
             </Text>
             <Text style={styles.statSub}>Relative Humidity</Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Air Quality</Text>
             <Text style={[styles.statValue, { color: airStatus.color }]}>
-              {latestAir > 0 ? latestAir.toFixed(0) : "Clean"}
+              {avgAirQuality > 0 ? avgAirQuality.toFixed(0) : '—'}
             </Text>
             <Text style={[styles.statSub, { color: airStatus.color }]}>
               {airStatus.label}
@@ -415,10 +615,18 @@ export default function RobotScreen() {
         <View style={styles.controlCard}>
           <Text style={styles.controlTitle}>Control Deck</Text>
           <View style={styles.controlRow}>
-            <TouchableOpacity style={styles.deployBtn} onPress={() => { siloSocket.sendCommand('deploy'); Alert.alert('Command Sent', 'Deploy instruction sent to the robot.'); }}>
+            <TouchableOpacity
+              style={[styles.deployBtn, isDeployed && { opacity: 0.4 }]}
+              onPress={handleDeploy}
+              disabled={isDeployed}
+            >
               <Text style={styles.deployBtnText}>Deploy</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.recallBtn} onPress={() => { siloSocket.sendCommand('recall'); Alert.alert('Command Sent', 'Recall/Stop instruction sent to the robot.'); }}>
+            <TouchableOpacity
+              style={[styles.recallBtn, !isDeployed && { opacity: 0.4 }]}
+              onPress={handleRecall}
+              disabled={!isDeployed}
+            >
               <Text style={styles.recallBtnText}>Recall</Text>
             </TouchableOpacity>
           </View>
@@ -559,4 +767,13 @@ const styles = StyleSheet.create({
   },
   startPosBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   startPosSubText: { color: '#EA575F', fontSize: 12, fontWeight: '500' },
+
+  // Resize button
+  resizeBtn: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 14,
+    padding: 11,
+    alignItems: 'center',
+  },
+  resizeBtnText: { color: '#8E8E93', fontSize: 13, fontWeight: '500' },
 });

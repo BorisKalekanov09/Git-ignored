@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 8080;
 // Supabase — use service role key to bypass RLS on server side
 // ===============================
 
-
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
 
 if (!process.env.SUPABASE_SERVICE_KEY) {
   console.warn('[Supabase] ⚠️  SUPABASE_SERVICE_KEY not set! Falling back to anon key — RLS will block server queries.');

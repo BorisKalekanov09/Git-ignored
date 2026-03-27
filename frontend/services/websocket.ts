@@ -63,7 +63,9 @@ export const siloSocket = {
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "sensor_data" || message.type === "cell_updated") {
+        // Forward all relevant message types to listeners
+        const forwarded = new Set(["sensor_data", "cell_updated", "mission_complete", "mission_error", "goto"]);
+        if (forwarded.has(message.type)) {
           listeners.forEach((callback) => callback(message.data ?? message));
         }
       } catch (e) {
