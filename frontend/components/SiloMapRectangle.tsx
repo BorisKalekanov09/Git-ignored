@@ -121,7 +121,7 @@ function BarnScene({
   );
 }
 
-const SiloMap = ({
+const SiloMapRectangle = ({
   points = [],
   cells  = [],
   hangar = null,
@@ -181,4 +181,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default SiloMap;
+export default SiloMapRectangle;

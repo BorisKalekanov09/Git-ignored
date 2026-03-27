@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Dimensions } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { siloSocket } from '@/services/websocket';
-import SiloMap from '@/components/SiloMap';
+import SiloMapRectangle from '@/components/SiloMapRectangle';
+import SiloMapCircle from '@/components/SilomapCircle';
 
 // ── Types ───────────────────────────────────────────────────
 type HeatPoint = { x: number; y: number; z: number; temp: number };
@@ -13,8 +14,21 @@ type SensorRecord = {
   longitude: number | null;
   created_at: string;
 };
-type Cell = { id: string; index_x: number; index_y: number; status: string };
-type Hangar = { id: string; width: number; height: number };
+type Cell = {
+  id: string;
+  index_x: number; 
+    index_y: number;
+    status: string 
+  };
+
+
+type Hangar = { 
+  id: string; 
+  shape: 'circle' | 'rectangle'; // Added this
+  width?: number; 
+  height?: number; 
+  diameter?: number; // Added this
+};
 
 const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2; // 20cm
@@ -47,9 +61,15 @@ export default function RobotScreen() {
   // Fetch hangar and cells from DB
   useEffect(() => {
     const loadHangarAndCells = async () => {
-      const { data: hData } = await supabase.from('hangars').select('*').limit(1).maybeSingle();
-      if (!hData) return;
-      setHangar(hData);
+  const { data: hData } = await supabase
+    .from('hangars')
+    .select('*')
+    .order('created_at', { ascending: false }) 
+    .limit(1)
+    .maybeSingle();
+    
+  if (!hData) return;
+  setHangar(hData);
 
       const { data: cData } = await supabase
         .from('cells')
@@ -121,7 +141,7 @@ export default function RobotScreen() {
 
   // Grid rendering — enforce min 18px per cell so it's always readable
   const MIN_CELL_PX = 18;
-  const cols = hangar ? Math.ceil(hangar.width / CELL_SIZE_METERS) : 0;
+  const cols = hangar ? Math.ceil((hangar.width ?? 10) / CELL_SIZE_METERS) : 0;
   const naturalCellPx = cols > 0 ? screenWidth / cols : MIN_CELL_PX;
   const cellPx = Math.max(naturalCellPx, MIN_CELL_PX);
   const gridWidth = cols * cellPx;
@@ -137,12 +157,16 @@ export default function RobotScreen() {
           </View>
         )}
 
-        {/* ── 3D box with cells on top face ── */}
-        <SiloMap
-          points={points}
-          cells={cells}
-          hangar={hangar}
-        />
+        {/* ── Dynamic Map Selection ── */}
+{hangar?.shape === 'circle' ? (
+  <SiloMapCircle points={points} />
+  ) : (
+  <SiloMapRectangle
+    points={points}
+    cells={cells}
+    hangar={hangar as any}
+  />
+)}
 
         {/* Generate cells button if needed */}
         {hangar && cells.length === 0 && (
