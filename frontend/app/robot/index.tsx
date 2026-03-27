@@ -30,9 +30,18 @@ type SensorRecord = {
   longitude: number | null;
   created_at: string;
 };
-type Cell = { id: string; hangar_id: string; index_x: number; index_y: number; status: string; last_visited_at: string | null };
+type Cell = {
+  id: string;
+  hangar_id: string;
+  index_x: number;
+  index_y: number;
+  status: string;
+  last_visited_at: string | null;
+  color?: string;       // 'green' | 'yellow' | 'red' — from server cell_updated
+  avg_temp?: number;
+  avg_humidity?: number;
+};
 type Hangar = { id: string; shape?: 'circle' | 'rectangle'; width: number; height: number; diameter?: number; starting_cell_id?: string | null };
-
 const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2;
 
@@ -89,7 +98,7 @@ export default function RobotScreen() {
         .eq('hangar_id', hData.id)
         .order('index_y', { ascending: true })
         .order('index_x', { ascending: true });
-          if (cData) setCells(cData);
+      if (cData) setCells(cData);
       if (hData.starting_cell_id) setStartingCellId(hData.starting_cell_id);
     };
 
@@ -142,19 +151,38 @@ export default function RobotScreen() {
   useEffect(() => {
     siloSocket.connect();
 
-    const off = siloSocket.onSensorData((newData: any) => {
-      const livePoint = toSurfacePoints([
-        {
-          id: Date.now(),
-          temperature: Number(newData.temperature ?? newData.temp) || 0,
-          humidity: Number(newData.humidity ?? newData.moisture) || 0,
-          latitude: Number(newData.latitude ?? newData.y) || 0,
-          longitude: Number(newData.longitude ?? newData.x) || 0,
-          created_at: new Date().toISOString(),
-        },
-      ])[0];
+    const off = siloSocket.onSensorData((data: any) => {
+      // 1. Live Heat Map Points
+      if (data.type === 'sensor_data' || data.temperature !== undefined) {
+        const livePoint = toSurfacePoints([
+          {
+            id: Date.now(),
+            temperature: Number(data.temperature ?? data.temp) || 0,
+            humidity: Number(data.humidity ?? data.moisture) || 0,
+            latitude: Number(data.latitude ?? data.y) || 0,
+            longitude: Number(data.longitude ?? data.x) || 0,
+            created_at: new Date().toISOString(),
+          },
+        ])[0];
+        setPoints((current) => [...current.slice(-149), livePoint]);
+      }
 
-      setPoints((current) => [...current.slice(-149), livePoint]);
+      // 2. Real-time Cell status (Real-time path painting)
+      if (data.type === 'cell_updated') {
+        const { x, y, status, color, avg_temp, avg_humidity } = data;
+        setCells((current) =>
+          current.map((c) =>
+            c.index_x === x && c.index_y === y
+              ? { ...c, status, color, avg_temp, avg_humidity }
+              : c
+          )
+        );
+      }
+
+      // 3. Mission complete notification
+      if (data.type === 'mission_complete') {
+        Alert.alert('Mission Complete', '✅ All cells have been scanned!');
+      }
     });
 
     return () => off();
@@ -219,7 +247,7 @@ export default function RobotScreen() {
       >
         <Pressable style={styles.modalOverlay} onPress={() => setPromptVisible(false)}>
           <KeyboardAvoidingView behavior="padding">
-            <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Pressable style={styles.modalCard} onPress={() => { }}>
               <Text style={styles.modalTitle}>Set Starting Position</Text>
               <Text style={styles.modalSubtitle}>Enter cell coordinates as x,y (e.g. 3,5)</Text>
               <TextInput

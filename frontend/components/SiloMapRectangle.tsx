@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import { Canvas, useThree, useFrame } from '@react-three/fiber/native';
 import * as THREE from 'three';
@@ -22,13 +22,17 @@ function CellTile({
   cell: Cell; longSide: number; shortSide: number; swapped: boolean; isStart: boolean;
 }) {
   const color = isStart
-    ? '#EA575F'
-    : cell.status === 'completed' ? '#EA575F'
+    ? '#FFFFFF'
+    : cell.status === 'danger'    ? '#EA575F'
+    : cell.status === 'warning'   ? '#FFA500'
+    : (cell.status === 'safe' || cell.status === 'completed') ? '#4CAF50'
     : cell.status === 'active'    ? '#00D5FF' : '#1A0A0B';
 
   const emissive = isStart
-    ? '#EA575F'
-    : cell.status === 'completed' ? '#7a1a20'
+    ? '#FFFFFF'
+    : cell.status === 'danger'    ? '#7a1a20'
+    : cell.status === 'warning'   ? '#8a5a00'
+    : (cell.status === 'safe' || cell.status === 'completed') ? '#1b4d1d'
     : cell.status === 'active'    ? '#006688' : '#000000';
 
   const emissiveIntensity = isStart ? 1.2 : 0.6;

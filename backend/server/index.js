@@ -10,11 +10,16 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // ===============================
-// Supabase
+// Supabase — use service role key to bypass RLS on server side
 // ===============================
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+if (!process.env.SUPABASE_SERVICE_KEY) {
+  console.warn('[Supabase] ⚠️  SUPABASE_SERVICE_KEY not set! Falling back to anon key — RLS will block server queries.');
+  console.warn('[Supabase]    Get your service_role key from: Supabase Dashboard → Settings → API → service_role (secret)');
+}
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  supabaseKey
 );
 
 // ===============================

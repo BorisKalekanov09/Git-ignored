@@ -1,9 +1,9 @@
 // ============================================================
-//  ESP32 LunaRobot — 90° Step Navigation
+//  ESP32 LunaRobot — Cell-to-Cell Autonomous Navigation
 //
-//  Phase 1: Drive forward TARGET_Y_CM  (ultrasonic + gyro lock)
-//  Phase 2: Turn 90° in place          (gyro Z integration)
-//  Phase 3: Drive forward TARGET_X_CM  (ultrasonic + gyro lock)
+//  Server sends: {"type":"goto","x_cm":30.0,"y_cm":50.0}
+//  Robot drives there from its current position, stays 2-3s,
+//  collects sensor data, then sends "cell_complete" back.
 // ============================================================
 
 #include <Wire.h>
@@ -14,15 +14,56 @@
 #include "hardware.h"
 
 // ─────────────────────────────────────────────────────────────
-// State
+// State machine
 // ─────────────────────────────────────────────────────────────
-enum State { CALIB, WAITING, DRIVE_Y, TURN, DRIVE_X, DONE, FAULT };
+enum State {
+  CALIB,
+  WAITING,
+  DRIVE_FWD,    // drive currentDriveDist cm forward
+  TURN,         // turn currentTurnDeg degrees in currentTurnDir
+  SAMPLING,     // stationary at cell centre, collecting sensor readings
+  FAULT
+};
 State state = CALIB;
 
-float distTraveled   = 0.0f;
-float sonarStart     = 0.0f;
-float worldX         = 0.0f;
-float worldY         = 0.0f;
+// ─────────────────────────────────────────────────────────────
+// Mission state
+// ─────────────────────────────────────────────────────────────
+// World position in cm (float, robot-centric)
+float worldX = 0.0f;
+float worldY = 0.0f;
+// Current absolute heading angle: 0 = "forward / +Y"
+// Robot always starts pointing in the +Y direction.
+// heading accumulates turn angle in RADIANS (positive = CCW / left).
+// We also track a discrete heading for cell navigation:
+//   0 = +Y (forward)  1 = +X (right)  2 = -Y (back)  3 = -X (left)
+int discreteHeading = 0; // 0=+Y, 1=+X, 2=-Y, 3=-X
+
+float distTraveled    = 0.0f;
+float sonarStart      = 0.0f;
+float currentDriveDist = 0.0f;
+float currentTurnDeg   = 90.0f;
+int   currentTurnDir   = 1;   // 1 = left(CCW), -1 = right(CW)
+
+// Pending goto target (in cm, absolute world coordinates)
+float gotoX = 0.0f;
+float gotoY = 0.0f;
+bool  gotoPending = false;
+
+// Action queue for decomposed movements
+// We decompose a goto into at most: [turn?, forward]
+// Implemented as a tiny state sequence.
+enum DrivePhase { PH_NONE, PH_TURN, PH_FORWARD, PH_SAMPLE };
+DrivePhase driveQueue[3];
+int        driveQueueLen = 0;
+int        driveQueueIdx = 0;
+
+// Sampling
+unsigned long sampleStart = 0;
+#define SAMPLE_DURATION_MS 2500  // stay ~2.5 seconds
+float   sampleTempSum  = 0.0f;
+float   sampleHumSum   = 0.0f;
+int     sampleCount    = 0;
 
 unsigned long telTimer       = 0;
 unsigned long logTimer       = 0;
@@ -33,52 +74,25 @@ unsigned long phaseStartTime = 0;
 // ─────────────────────────────────────────────────────────────
 WebSocketsClient ws;
 
-void wsEvent(WStype_t type, uint8_t* p, size_t len) {
-  if (type == WStype_CONNECTED)    Serial.println(F("[WS] Connected to server."));
-  if (type == WStype_DISCONNECTED) Serial.println(F("[WS] Disconnected from server."));
-  if (type == WStype_TEXT) {
-    String payload = (char*)p;
-    
-    // ── Handle DEPLOY (Start) ──
-    if (payload.indexOf("\"type\":\"command\"") >= 0 && payload.indexOf("\"action\":\"deploy\"") >= 0) {
-      if (state == WAITING || state == DONE) {
-        Serial.println(F("[WS] Command: DEPLOY — Starting mission..."));
-        
-        resetHeadingState();
-        distTraveled   = 0.0f;
-        sonarStart     = readSonarCm();
-        phaseStartTime = millis();
-
-        if (!sonarStartCheck(sonarStart, "LEG 1", setFault)) return;
-
-        state = DRIVE_Y;
-        printBanner("STARTING LEG 1 — DRIVE FORWARD (Y)");
-        Serial.print(F("  Sonar at start      : ")); Serial.print(sonarStart, 1); Serial.println(F(" cm to wall"));
-        Serial.print(F("  Target sonar reading: ")); Serial.print(sonarStart - TARGET_Y_CM, 1); Serial.println(F(" cm"));
-        Serial.print(F("  Must travel         : ")); Serial.print(TARGET_Y_CM, 1); Serial.println(F(" cm"));
-        printSeparator();
-      }
-    }
-    
-    // ── Handle RECALL (Emergency Stop) ──
-    else if (payload.indexOf("\"type\":\"command\"") >= 0 && payload.indexOf("\"action\":\"recall\"") >= 0) {
-      Serial.println(F("[WS] Command: RECALL — Emergency Stop Engaged."));
-      motors(0, 0); // Kill power immediately
-      state = WAITING; // Go back to waiting for a new deploy
-      printBanner("MISSION ABORTED — WAITING");
-    }
-  }
+void sendCellComplete() {
+  float avgTemp = (sampleCount > 0) ? (sampleTempSum / sampleCount) : dht.readTemperature();
+  float avgHum  = (sampleCount > 0) ? (sampleHumSum  / sampleCount) : dht.readHumidity();
+  String msg = "{\"type\":\"cell_complete\""
+               ",\"x_cm\":"     + String(worldX, 1) +
+               ",\"y_cm\":"     + String(worldY, 1) +
+               ",\"temperature\":" + String(avgTemp, 2) +
+               ",\"humidity\":"    + String(avgHum, 2) +
+               "}";
+  ws.sendTXT(msg);
+  Serial.println(F("[CELL] cell_complete sent to server."));
+  Serial.print(F("       Avg temp=")); Serial.print(avgTemp, 1);
+  Serial.print(F("  Avg hum=")); Serial.println(avgHum, 1);
 }
-
-void wsTask(void*) { while (1) { ws.loop(); vTaskDelay(10); } }
 
 void sendTelemetry() {
   String msg = "{\"device_id\":\""   + String(DEVICE_ID)   + "\""
              + ",\"x\":"             + String(worldX, 1)
              + ",\"y\":"             + String(worldY, 1)
-             + ",\"target_x\":"      + String(TARGET_X_CM, 1)
-             + ",\"target_y\":"      + String(TARGET_Y_CM, 1)
-             + ",\"dist_traveled\":" + String(distTraveled, 1)
              + ",\"heading_deg\":"   + String(heading * 180.0f / PI, 1)
              + ",\"temperature\":"   + String(dht.readTemperature(), 1)
              + ",\"humidity\":"      + String(dht.readHumidity(), 1)
@@ -87,6 +101,203 @@ void sendTelemetry() {
              + "}";
   ws.sendTXT(msg);
 }
+
+// ─────────────────────────────────────────────────────────────
+// Navigation helpers
+// ─────────────────────────────────────────────────────────────
+
+// Returns the number of 90° CCW steps needed to go from `from` to `to`
+// (returns 0,1,2,3)
+int headingDiff(int from, int to) {
+  return (to - from + 4) % 4;
+}
+
+// Given current discreteHeading and desired heading, pick the shorter turn.
+// Sets currentTurnDeg, currentTurnDir, currentTurnDeg.
+// Returns true if a turn is needed.
+bool planTurn(int desiredHeading) {
+  int diff = headingDiff(discreteHeading, desiredHeading);
+  if (diff == 0) return false;
+  if (diff == 1) {
+    // 1 step CCW = left turn
+    currentTurnDir = 1;
+    currentTurnDeg = 90.0f;
+  } else if (diff == 3) {
+    // 3 steps CCW = 1 step CW = right turn
+    currentTurnDir = -1;
+    currentTurnDeg = 90.0f;
+  } else {
+    // diff == 2: 180° — always turn right for consistency
+    currentTurnDir = -1;
+    currentTurnDeg = 180.0f;
+  }
+  return true;
+}
+
+// Compute what movements are needed to reach (tx, ty) from (worldX, worldY).
+// We navigate purely in one axis at a time (L-shaped or straight).
+// Order: first correct X, then Y (or whichever is non-zero).
+void buildDriveQueue(float tx, float ty) {
+  driveQueueLen = 0;
+  driveQueueIdx = 0;
+
+  float dx = tx - worldX;
+  float dy = ty - worldY;
+
+  // ── Step 1: horizontal (X) movement if needed ──
+  if (fabsf(dx) > ARRIVE_TOLERANCE_CM) {
+    int desiredH = (dx > 0) ? 1 : 3; // +X = heading 1, -X = heading 3
+    if (planTurn(desiredH)) {
+      driveQueue[driveQueueLen++] = PH_TURN;
+    }
+    driveQueue[driveQueueLen++] = PH_FORWARD;
+    // after this forward, discreteHeading will be desiredH
+    // Store what we'll drive and heading update in startNextPhase()
+  }
+
+  // ── Step 2: vertical (Y) movement if needed ──
+  if (fabsf(dy) > ARRIVE_TOLERANCE_CM) {
+    // (We'll re-evaluate at runtime since dx may have changed heading)
+    driveQueue[driveQueueLen++] = PH_FORWARD; // placeholder; handled in startNextPhase
+  }
+
+  // ── Step 3: sample at destination ──
+  driveQueue[driveQueueLen++] = PH_SAMPLE;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Phase executor — called when we need to start the next phase
+// ─────────────────────────────────────────────────────────────
+void startNextPhase();
+
+void startPhase(DrivePhase ph) {
+  float dx = gotoX - worldX;
+  float dy = gotoY - worldY;
+
+  switch (ph) {
+
+    case PH_TURN: {
+      // Re-derive desired heading based on remaining delta
+      int desiredH;
+      if (fabsf(dx) > ARRIVE_TOLERANCE_CM) {
+        desiredH = (dx > 0) ? 1 : 3;
+      } else {
+        desiredH = (dy > 0) ? 0 : 2;
+      }
+      if (!planTurn(desiredH)) {
+        // No turn needed — skip
+        driveQueueIdx++;
+        startNextPhase();
+        return;
+      }
+      resetHeadingState();
+      phaseStartTime = millis();
+      state = TURN;
+      printBanner("PHASE: TURN");
+      break;
+    }
+
+    case PH_FORWARD: {
+      // Decide distance based on which axis we're driving
+      float dist;
+      // If we're heading along X axis:
+      if (discreteHeading == 1 || discreteHeading == 3) {
+        dist = fabsf(dx);
+      } else {
+        dist = fabsf(dy);
+      }
+      if (dist < ARRIVE_TOLERANCE_CM) {
+        // Nothing to drive — skip
+        driveQueueIdx++;
+        startNextPhase();
+        return;
+      }
+      currentDriveDist = dist;
+      distTraveled     = 0.0f;
+      sonarStart       = readSonarCm();
+      resetHeadingState();
+      phaseStartTime = millis();
+      state = DRIVE_FWD;
+      printBanner("PHASE: DRIVE FORWARD");
+      Serial.print(F("  Target dist: ")); Serial.print(dist, 1); Serial.println(F(" cm"));
+      break;
+    }
+
+    case PH_SAMPLE: {
+      motors(0, 0);
+      sampleTempSum  = 0.0f;
+      sampleHumSum   = 0.0f;
+      sampleCount    = 0;
+      sampleStart    = millis();
+      state          = SAMPLING;
+      printBanner("PHASE: SAMPLING AT CELL");
+      break;
+    }
+
+    default:
+      break;
+  }
+}
+
+void startNextPhase() {
+  if (driveQueueIdx >= driveQueueLen) {
+    // All phases done
+    sendCellComplete();
+    state = WAITING;
+    printBanner("CELL COMPLETE — WAITING FOR NEXT");
+    return;
+  }
+  startPhase(driveQueue[driveQueueIdx]);
+}
+
+// ─────────────────────────────────────────────────────────────
+// WebSocket event handler
+// ─────────────────────────────────────────────────────────────
+void wsEvent(WStype_t type, uint8_t* p, size_t len) {
+  if (type == WStype_CONNECTED)    Serial.println(F("[WS] Connected to server."));
+  if (type == WStype_DISCONNECTED) Serial.println(F("[WS] Disconnected from server."));
+
+  if (type == WStype_TEXT) {
+    String payload = (char*)p;
+
+    // ── goto command: {"type":"goto","x_cm":30.0,"y_cm":50.0} ──
+    if (payload.indexOf("\"type\":\"goto\"") >= 0 && state == WAITING) {
+      // Parse x_cm and y_cm with simple string scanning
+      int xi = payload.indexOf("\"x_cm\":");
+      int yi = payload.indexOf("\"y_cm\":");
+      if (xi < 0 || yi < 0) return;
+
+      float tx = payload.substring(xi + 7).toFloat();
+      float ty = payload.substring(yi + 7).toFloat();
+
+      gotoX = tx;
+      gotoY = ty;
+
+      Serial.println();
+      Serial.print(F("[WS] GOTO command → target X:")); Serial.print(tx, 1);
+      Serial.print(F(" cm   Y:")); Serial.print(ty, 1); Serial.println(F(" cm"));
+      Serial.print(F("       Current world X:")); Serial.print(worldX, 1);
+      Serial.print(F("  Y:")); Serial.println(worldY, 1);
+
+      buildDriveQueue(tx, ty);
+      driveQueueIdx = 0;
+      startNextPhase();
+      return;
+    }
+
+    // ── recall: emergency stop ──
+    if (payload.indexOf("\"action\":\"recall\"") >= 0) {
+      Serial.println(F("[WS] RECALL — Emergency Stop."));
+      motors(0, 0);
+      driveQueueLen = 0;
+      driveQueueIdx = 0;
+      state = WAITING;
+      printBanner("MISSION ABORTED — WAITING");
+    }
+  }
+}
+
+void wsTask(void*) { while (1) { ws.loop(); vTaskDelay(10); } }
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -122,7 +333,7 @@ void setup() {
   delay(500);
 
   printBanner("ESP32 LUNAROBOT STARTING");
-  Serial.println(F("  Navigation : 90-degree step (Y forward, turn, X forward)"));
+  Serial.println(F("  Navigation : Cell-to-Cell via server GOTO commands"));
   Serial.println(F("  Sensors    : MPU6050 gyro + HC-SR04 ultrasonic + DHT11"));
   printSeparator();
 
@@ -132,20 +343,18 @@ void setup() {
   Wire.begin();
   dht.begin();
   if (!mpu.begin()) {
-    Serial.println(F("[ERROR] MPU6050 not found on I2C — halting!"));
+    Serial.println(F("[ERROR] MPU6050 not found — halting!"));
     while (1);
   }
   mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_10_HZ);
-  Serial.println(F("[INIT] MPU6050 found and configured."));
-  Serial.println(F("         Accel : ±4g  |  Gyro : ±500°/s  |  LPF : 10 Hz"));
+  Serial.println(F("[INIT] MPU6050 configured."));
 
   calibrateMPU();
 
   // Sonar self-test
   printBanner("ULTRASONIC SELF-TEST");
-  Serial.println(F("  Taking 5 readings — make sure there is an object/wall ahead:"));
   float sonarSum = 0;
   for (int i = 0; i < 5; i++) {
     float r = readSonarCm();
@@ -157,9 +366,9 @@ void setup() {
   float sonarAvg = sonarSum / 5.0f;
   Serial.print(F("  Average : ")); Serial.print(sonarAvg, 1); Serial.println(F(" cm"));
   if (sonarAvg >= SONAR_MAX_CM - 1.0f)
-    Serial.println(F("  [WARN] Readings maxed out — no object detected ahead!"));
+    Serial.println(F("  [WARN] No object detected ahead."));
   else
-    Serial.println(F("  [OK] Object detected. Sonar is healthy."));
+    Serial.println(F("  [OK] Sonar healthy."));
   printSeparator();
 
   // WiFi
@@ -168,7 +377,7 @@ void setup() {
   int wifiTries = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500); Serial.print(F("."));
-    if (++wifiTries > 30) { Serial.println(F("\n[WIFI] Timeout — continuing without WiFi.")); break; }
+    if (++wifiTries > 30) { Serial.println(F("\n[WIFI] Timeout.")); break; }
   }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println();
@@ -186,26 +395,9 @@ void setup() {
 
   telTimer = logTimer = millis();
 
-  // Mission plan summary
-  printBanner("MISSION PLAN");
-  Serial.println(F("  LEG 1 — Drive forward (Y axis)"));
-  Serial.print(F("           Distance : ")); Serial.print(TARGET_Y_CM, 1); Serial.println(F(" cm"));
-  Serial.print(F("           Speed    : ")); Serial.println(DRIVE_SPEED);
-  Serial.println();
-  Serial.println(F("  LEG 2 — Turn in place"));
-  Serial.print(F("           Angle    : ")); Serial.print(TURN_DEGREES, 0);
-  Serial.print(F("°  ")); Serial.println(TURN_DIRECTION > 0 ? F("LEFT (CCW)") : F("RIGHT (CW)"));
-  Serial.print(F("           Speed    : ")); Serial.println(TURN_SPEED);
-  Serial.println();
-  Serial.println(F("  LEG 3 — Drive forward (X axis)"));
-  Serial.print(F("           Distance : ")); Serial.print(TARGET_X_CM, 1); Serial.println(F(" cm"));
-  Serial.print(F("           Speed    : ")); Serial.println(DRIVE_SPEED);
-  printSeparator();
-
-  // Wait for command
   state = WAITING;
-  printBanner("WAITING FOR DEPLOY COMMAND");
-  Serial.println(F("  Robot is ready. Press Deploy in the app to begin Leg 1."));
+  printBanner("WAITING FOR GOTO COMMAND");
+  Serial.println(F("  Robot is ready. Press Deploy in the app to begin."));
   printSeparator();
 }
 
@@ -221,178 +413,113 @@ void loop() {
 
   switch (state) {
 
-  // ── Leg 1: drive forward TARGET_Y_CM ──────────────────────
-  case DRIVE_Y: {
+  // ── Drive Forward ─────────────────────────────────────────
+  case DRIVE_FWD: {
     float sonarNow = readSonarCm();
 
+    // No wall in range — dead-reckoning fallback
     if (sonarNow >= SONAR_MAX_CM - 1.0f || sonarNow <= 2.0f) {
-      Serial.println(F("[Y-LEG] [WARN] Bad sonar reading — skipping iteration."));
-      driveStraight(0.0f);
+      // Estimate time needed: DRIVE_SPEED ~= 0.2 m/s (rough)
+      // 20cm/s → 1cm takes ~50ms
+      unsigned long needed = (unsigned long)(currentDriveDist * 50.0f);
+      if (now - phaseStartTime >= needed) {
+        motors(0, 0);
+        // Update world position
+        updateWorldPosAfterForward();
+        driveQueueIdx++;
+        startNextPhase();
+      } else {
+        driveStraight(0.0f);
+      }
       break;
     }
 
-    distTraveled    = sonarStart - sonarNow;
+    distTraveled = sonarStart - sonarNow;
     if (distTraveled < 0) distTraveled = 0;
-    float remaining = TARGET_Y_CM - distTraveled;
-    float progress  = constrain((distTraveled / TARGET_Y_CM) * 100.0f, 0, 100);
-    bool  arrived   = distTraveled >= (TARGET_Y_CM - ARRIVE_TOLERANCE_CM);
+    bool arrived = distTraveled >= (currentDriveDist - ARRIVE_TOLERANCE_CM);
 
     if (now - logTimer >= 400) {
-      Serial.print(F("[Y-LEG]"));
-      Serial.print(F("  traveled: "));    Serial.print(distTraveled, 1);          Serial.print(F(" cm"));
-      Serial.print(F("  remaining: "));   Serial.print(remaining, 1);             Serial.print(F(" cm"));
-      Serial.print(F("  progress: "));    Serial.print(progress, 0);              Serial.print(F("%"));
-      Serial.print(F("  sonar: "));       Serial.print(sonarNow, 1);              Serial.print(F(" cm"));
-      Serial.print(F("  heading: "));     Serial.print(heading * 180.0f / PI, 2); Serial.print(F("°"));
-      Serial.print(F("  t+"));            Serial.print(phaseElapsed(), 1);        Serial.println(F("s"));
+      Serial.print(F("[DRIVE] traveled:")); Serial.print(distTraveled, 1);
+      Serial.print(F("  target:")); Serial.print(currentDriveDist, 1);
+      Serial.print(F("  remaining:")); Serial.println(currentDriveDist - distTraveled, 1);
     }
 
     if (arrived) {
       motors(0, 0);
-      worldY = distTraveled;
-
-      printBanner("LEG 1 COMPLETE");
-      Serial.print(F("  Traveled   : ")); Serial.print(distTraveled, 1);                      Serial.println(F(" cm"));
-      Serial.print(F("  Target was : ")); Serial.print(TARGET_Y_CM, 1);                       Serial.println(F(" cm"));
-      Serial.print(F("  Error      : ")); Serial.print(fabsf(distTraveled - TARGET_Y_CM), 1); Serial.println(F(" cm"));
-      Serial.print(F("  Heading    : ")); Serial.print(heading * 180.0f / PI, 2);             Serial.println(F("°"));
-      Serial.print(F("  Time       : ")); Serial.print(phaseElapsed(), 1);                    Serial.println(F(" s"));
-      printSeparator();
-
-      resetHeadingState();
-      phaseStartTime = millis();
-      state          = TURN;
-
-      printBanner("STARTING LEG 2 — TURN");
-      Serial.print(F("  Direction  : ")); Serial.println(TURN_DIRECTION > 0 ? F("LEFT (CCW)") : F("RIGHT (CW)"));
-      Serial.print(F("  Goal       : ")); Serial.print(TURN_DEGREES, 0); Serial.println(F("°"));
-      Serial.print(F("  Tolerance  : ±")); Serial.print(TURN_TOLERANCE_DEG, 1); Serial.println(F("°"));
-      printSeparator();
+      updateWorldPosAfterForward();
+      driveQueueIdx++;
+      startNextPhase();
     } else {
       driveStraight(0.0f);
     }
     break;
   }
 
-  // ── Leg 2: Turn 90° ───────────────────────────────────────
+  // ── Turn ──────────────────────────────────────────────────
   case TURN: {
-    float targetRad = TURN_DIRECTION * TURN_DEGREES * PI / 180.0f;
+    float targetRad = currentTurnDir * currentTurnDeg * PI / 180.0f;
     float turned    = heading;
     float remaining = targetRad - turned;
-    float progress  = constrain((fabsf(turned) / TURN_DEGREES) * (180.0f / PI) * 100.0f, 0, 100);
     bool  turnDone  = fabsf(remaining) <= (TURN_TOLERANCE_DEG * PI / 180.0f);
 
-    if (now - logTimer >= 200) {
-      Serial.print(F("[TURN]"));
-      Serial.print(F("  turned: "));    Serial.print(turned * 180.0f / PI, 1);    Serial.print(F("°"));
-      Serial.print(F("  remaining: ")); Serial.print(remaining * 180.0f / PI, 1); Serial.print(F("°"));
-      Serial.print(F("  progress: "));  Serial.print(progress, 0);                Serial.print(F("%"));
-      Serial.print(F("  t+"));          Serial.print(phaseElapsed(), 1);          Serial.println(F("s"));
+    if (now - logTimer >= 400) {
+      Serial.print(F("[TURN] turned:")); Serial.print(turned * 180.0f / PI, 1);
+      Serial.print(F("  remaining:")); Serial.println(remaining * 180.0f / PI, 1);
     }
 
     if (turnDone) {
       motors(0, 0);
       delay(200);
-
-      printBanner("LEG 2 COMPLETE");
-      Serial.print(F("  Turned     : ")); Serial.print(turned * 180.0f / PI, 2);                              Serial.println(F("°"));
-      Serial.print(F("  Target was : ")); Serial.print(TURN_DEGREES, 0);                                      Serial.println(F("°"));
-      Serial.print(F("  Error      : ")); Serial.print(fabsf(fabsf(turned * 180.0f / PI) - TURN_DEGREES), 2); Serial.println(F("°"));
-      Serial.print(F("  Time       : ")); Serial.print(phaseElapsed(), 1);                                    Serial.println(F(" s"));
-      printSeparator();
-
-      resetHeadingState();
-      distTraveled   = 0.0f;
-      phaseStartTime = millis();
-
-      sonarStart = readSonarCm();
-      if (!sonarStartCheck(sonarStart, "LEG 3", setFault)) break;
-
-      state = DRIVE_X;
-      printBanner("STARTING LEG 3 — DRIVE FORWARD (X)");
-      Serial.print(F("  Sonar at start      : ")); Serial.print(sonarStart, 1); Serial.println(F(" cm to wall"));
-      Serial.print(F("  Target sonar reading: ")); Serial.print(sonarStart - TARGET_X_CM, 1); Serial.println(F(" cm"));
-      Serial.print(F("  Must travel         : ")); Serial.print(TARGET_X_CM, 1); Serial.println(F(" cm"));
-      printSeparator();
+      // Update discrete heading
+      if (currentTurnDir > 0) {
+        discreteHeading = (discreteHeading + 3) % 4; // CCW = left
+      } else {
+        discreteHeading = (discreteHeading + 1) % 4; // CW = right
+      }
+      if (currentTurnDeg > 91.0f) {
+        // 180° turn — apply twice
+        discreteHeading = (discreteHeading + 1) % 4;
+      }
+      printBanner("TURN COMPLETE");
+      driveQueueIdx++;
+      startNextPhase();
     } else {
-      if (TURN_DIRECTION > 0) motors( TURN_SPEED, -TURN_SPEED);
+      if (currentTurnDir > 0) motors( TURN_SPEED, -TURN_SPEED);
       else                    motors(-TURN_SPEED,  TURN_SPEED);
     }
     break;
   }
 
-  // ── Leg 3: drive forward TARGET_X_CM ──────────────────────
-  case DRIVE_X: {
-    float sonarNow = readSonarCm();
-
-    if (sonarNow >= SONAR_MAX_CM - 1.0f || sonarNow <= 2.0f) {
-      Serial.println(F("[X-LEG] [WARN] Bad sonar reading — skipping iteration."));
-      driveStraight(0.0f);
-      break;
+  // ── Sampling ──────────────────────────────────────────────
+  case SAMPLING: {
+    motors(0, 0);
+    // Collect a reading every ~250ms
+    static unsigned long lastSampleTime = 0;
+    if (now - lastSampleTime >= 250) {
+      float t = dht.readTemperature();
+      float h = dht.readHumidity();
+      if (!isnan(t) && !isnan(h)) {
+        sampleTempSum += t;
+        sampleHumSum  += h;
+        sampleCount++;
+      }
+      lastSampleTime = now;
     }
-
-    distTraveled    = sonarStart - sonarNow;
-    if (distTraveled < 0) distTraveled = 0;
-    float remaining = TARGET_X_CM - distTraveled;
-    float progress  = constrain((distTraveled / TARGET_X_CM) * 100.0f, 0, 100);
-    bool  arrived   = distTraveled >= (TARGET_X_CM - ARRIVE_TOLERANCE_CM);
-
-    if (now - logTimer >= 400) {
-      Serial.print(F("[X-LEG]"));
-      Serial.print(F("  traveled: "));    Serial.print(distTraveled, 1);          Serial.print(F(" cm"));
-      Serial.print(F("  remaining: "));   Serial.print(remaining, 1);             Serial.print(F(" cm"));
-      Serial.print(F("  progress: "));    Serial.print(progress, 0);              Serial.print(F("%"));
-      Serial.print(F("  sonar: "));       Serial.print(sonarNow, 1);              Serial.print(F(" cm"));
-      Serial.print(F("  heading: "));     Serial.print(heading * 180.0f / PI, 2); Serial.print(F("°"));
-      Serial.print(F("  t+"));            Serial.print(phaseElapsed(), 1);        Serial.println(F("s"));
-    }
-
-    if (arrived) {
-      motors(0, 0);
-      worldX = distTraveled;
-
-      printBanner("LEG 3 COMPLETE");
-      Serial.print(F("  Traveled   : ")); Serial.print(distTraveled, 1);                      Serial.println(F(" cm"));
-      Serial.print(F("  Target was : ")); Serial.print(TARGET_X_CM, 1);                       Serial.println(F(" cm"));
-      Serial.print(F("  Error      : ")); Serial.print(fabsf(distTraveled - TARGET_X_CM), 1); Serial.println(F(" cm"));
-      Serial.print(F("  Heading    : ")); Serial.print(heading * 180.0f / PI, 2);             Serial.println(F("°"));
-      Serial.print(F("  Time       : ")); Serial.print(phaseElapsed(), 1);                    Serial.println(F(" s"));
-      printSeparator();
-
-      state = DONE;
-      printBanner("*** MISSION COMPLETE ***");
-      Serial.println(F("  Final report:"));
-      Serial.print(F("    Y traveled : ")); Serial.print(worldY, 1);
-      Serial.print(F(" cm  /  target: ")); Serial.print(TARGET_Y_CM, 1);
-      Serial.print(F(" cm  /  error: ")); Serial.print(fabsf(worldY - TARGET_Y_CM), 1); Serial.println(F(" cm"));
-      Serial.print(F("    X traveled : ")); Serial.print(worldX, 1);
-      Serial.print(F(" cm  /  target: ")); Serial.print(TARGET_X_CM, 1);
-      Serial.print(F(" cm  /  error: ")); Serial.print(fabsf(worldX - TARGET_X_CM), 1); Serial.println(F(" cm"));
-      Serial.println(F("  Robot stopped. Sending telemetry every 10s."));
-      printSeparator();
-    } else {
-      driveStraight(0.0f);
+    if (now - sampleStart >= SAMPLE_DURATION_MS) {
+      driveQueueIdx++;
+      startNextPhase(); // Will hit PH_SAMPLE done → sendCellComplete
     }
     break;
   }
 
-  // ── Done ──────────────────────────────────────────────────
-  case DONE:
-    motors(0, 0);
-    if (now - telTimer >= 10000) { sendTelemetry(); telTimer = now; }
-    break;
-
-  // ── Fault — safe stop ─────────────────────────────────────
+  // ── Fault ─────────────────────────────────────────────────
   case FAULT:
     motors(0, 0);
     if (now - logTimer >= 5000)
-      Serial.println(F("[FAULT] Robot halted due to sensor error. Power cycle to restart."));
+      Serial.println(F("[FAULT] Halted. Power cycle to restart."));
     break;
 
   case WAITING:
-    motors(0, 0);
-    break;
-
   case CALIB:
   default:
     motors(0, 0);
@@ -401,4 +528,20 @@ void loop() {
 
   if (now - logTimer >= 400) logTimer = now;
   delay(10);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Update worldX/worldY after a forward move completes
+// ─────────────────────────────────────────────────────────────
+void updateWorldPosAfterForward() {
+  // Use actual distTraveled if sonar was valid, else currentDriveDist
+  float moved = (distTraveled > 1.0f) ? distTraveled : currentDriveDist;
+  switch (discreteHeading) {
+    case 0: worldY += moved; break; // +Y
+    case 1: worldX += moved; break; // +X
+    case 2: worldY -= moved; break; // -Y
+    case 3: worldX -= moved; break; // -X
+  }
+  Serial.print(F("[POS] World: X=")); Serial.print(worldX, 1);
+  Serial.print(F("  Y=")); Serial.println(worldY, 1);
 }
