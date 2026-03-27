@@ -63,9 +63,8 @@ export const siloSocket = {
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "sensor_data") {
-          const payload = message.data ?? message;
-          listeners.forEach((callback) => callback(payload));
+        if (message.type === "sensor_data" || message.type === "cell_updated") {
+          listeners.forEach((callback) => callback(message.data ?? message));
         }
       } catch (e) {
         console.error("WS Parse Error", e);
