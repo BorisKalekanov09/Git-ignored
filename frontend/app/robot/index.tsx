@@ -41,8 +41,7 @@ type Cell = {
   avg_temp?: number;
   avg_humidity?: number;
 };
-type Hangar = { id: string; width: number; height: number; starting_cell_id?: string | null };
-
+type Hangar = { id: string; shape?: 'circle' | 'rectangle'; width: number; height: number; diameter?: number; starting_cell_id?: string | null };
 const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2;
 
