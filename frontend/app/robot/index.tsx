@@ -21,13 +21,15 @@ import SiloMap from '@/components/SiloMapRectangle';
 import SiloMapCircle from '@/components/SilomapCircle';
 
 // ── Types ───────────────────────────────────────────────────
-type HeatPoint = { x: number; y: number; z: number; temp: number; humidity: number };
+type HeatPoint = { x: number; y: number; z: number; temp: number; humidity: number; airQuality: number; airDigital: number };
 type SensorRecord = {
   id: number;
   temperature: number | null;
   humidity: number | null;
   latitude: number | null;
   longitude: number | null;
+  air_quality: number | null;
+  air_digital: number | null;
   created_at: string;
 };
 type Cell = {
@@ -46,14 +48,22 @@ const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2;
 
 function toSurfacePoints(records: SensorRecord[]): HeatPoint[] {
-  if (!records.length) return [{ x: 0, y: SURFACE_Y, z: 0, temp: 25, humidity: 45 }];
+  if (!records.length) return [{ x: 0, y: SURFACE_Y, z: 0, temp: 25, humidity: 45, airQuality: 0, airDigital: 1 }];
   return records.map((r) => ({
     x: (Number(r.longitude) || 0) * 2,
     y: SURFACE_Y,
     z: (Number(r.latitude) || 0) * 2,
     temp: Number(r.temperature) || 0,
     humidity: Number(r.humidity) || 0,
+    airQuality: Number(r.air_quality) || 0,
+    airDigital: Number(r.air_digital) || 0,
   }));
+}
+
+function getAirStatus(score: number, digital: number): { label: string; color: string } {
+  if (digital === 0) return { label: 'Danger', color: '#EA575F' }; // Assuming active low for MQ sensors
+  if (score > 2000) return { label: 'Poor', color: '#FFA500' };
+  return { label: 'Fresh', color: '#4CAF50' };
 }
 
 function getTempStatus(temp: number): { label: string; color: string } {
@@ -131,7 +141,7 @@ export default function RobotScreen() {
     const loadLatestFromDb = async () => {
       const { data, error } = await supabase
         .from('sensor_data')
-        .select('id, temperature, humidity, latitude, longitude, created_at')
+        .select('id, temperature, humidity, air_quality, air_digital, latitude, longitude, created_at')
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -161,6 +171,8 @@ export default function RobotScreen() {
             humidity: Number(data.humidity ?? data.moisture) || 0,
             latitude: Number(data.latitude ?? data.y) || 0,
             longitude: Number(data.longitude ?? data.x) || 0,
+            air_quality: Number(data.air_quality) || 0,
+            air_digital: Number(data.air_digital) ?? 1,
             created_at: new Date().toISOString(),
           },
         ])[0];
@@ -189,6 +201,9 @@ export default function RobotScreen() {
   }, []);
 
   const tempStatus = getTempStatus(latestTemp);
+  const latestAir = points.length > 0 ? points[points.length - 1].airQuality : 0;
+  const latestAirDig = points.length > 0 ? points[points.length - 1].airDigital : 1;
+  const airStatus = getAirStatus(latestAir, latestAirDig);
 
   const saveStartingPosition = async (raw: string) => {
     const parts = raw.split(',').map((s) => s.trim());
@@ -388,8 +403,12 @@ export default function RobotScreen() {
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>Air Quality</Text>
-            <Text style={styles.statValue}>—</Text>
-            <Text style={styles.statSub}>N/A</Text>
+            <Text style={[styles.statValue, { color: airStatus.color }]}>
+              {latestAir > 0 ? latestAir.toFixed(0) : "Clean"}
+            </Text>
+            <Text style={[styles.statSub, { color: airStatus.color }]}>
+              {airStatus.label}
+            </Text>
           </View>
         </View>
 
