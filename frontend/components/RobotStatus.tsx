@@ -50,6 +50,7 @@ interface RobotStatusProps {
   isWorking: boolean;
   progress?: number; // 0 to 1
   startTime?: string;
+  title?: string;
   onPress?: () => void;
 }
 
@@ -57,6 +58,7 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
   isWorking = true,
   progress = 0.65,
   startTime = "January 8, 2026 14:42",
+  title = 'Robot',
   onPress 
 }) => {
   const formatTimestamp = (timestamp: string) => {
@@ -76,7 +78,7 @@ const RobotStatus: React.FC<RobotStatusProps> = ({
     >
       {/* Header */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text style={{ color: 'white', fontSize: 20, fontWeight: '600' }}>Robot</Text>
+        <Text style={{ color: 'white', fontSize: 20, fontWeight: '600' }}>{title}</Text>
         {isWorking && <CircularProgress progress={progress} />}
       </View>
       
