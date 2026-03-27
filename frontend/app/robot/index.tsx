@@ -18,6 +18,7 @@ import BlurHeader from '@/components/BlurHeader';
 import { supabase } from '@/lib/supabase';
 import { siloSocket } from '@/services/websocket';
 import SiloMap from '@/components/SiloMapRectangle';
+import SiloMapCircle from '@/components/SilomapCircle';
 
 // ── Types ───────────────────────────────────────────────────
 type HeatPoint = { x: number; y: number; z: number; temp: number; humidity: number };
@@ -30,7 +31,7 @@ type SensorRecord = {
   created_at: string;
 };
 type Cell = { id: string; hangar_id: string; index_x: number; index_y: number; status: string; last_visited_at: string | null };
-type Hangar = { id: string; width: number; height: number; starting_cell_id?: string | null };
+type Hangar = { id: string; shape?: 'circle' | 'rectangle'; width: number; height: number; diameter?: number; starting_cell_id?: string | null };
 
 const SURFACE_Y = 2.9;
 const CELL_SIZE_METERS = 0.2;
@@ -274,7 +275,11 @@ export default function RobotScreen() {
             onTouchEnd={() => setScrollEnabled(true)}
             onTouchCancel={() => setScrollEnabled(true)}
           >
-            <SiloMap points={points} cells={cells} hangar={hangar} startingCellId={startingCellId} />
+            {hangar?.shape === 'circle' ? (
+              <SiloMapCircle points={points} cells={cells} hangar={hangar} startingCellId={startingCellId} />
+            ) : (
+              <SiloMap points={points} cells={cells} hangar={hangar} startingCellId={startingCellId} />
+            )}
           </View>
 
           {/* Starting Position button */}
