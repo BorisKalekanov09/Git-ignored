@@ -7,6 +7,7 @@
 # Arduino Secrets
 **/secrets.h
 Arduino/secrets.h
+**/config.h
 
 # Node Dependencies
 node_modules/
