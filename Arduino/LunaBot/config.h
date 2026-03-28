@@ -1,9 +1,9 @@
 #pragma once
 
 // ── WiFi / Server ─────────────────────────────────────────────
-#define WIFI_SSID        "TP-LINK_7516"
-#define WIFI_PASSWORD    "e0887714303"
-#define SERVER_ADDRESS   "192.168.0.106"
+#define WIFI_SSID        "Mino"
+#define WIFI_PASSWORD    "AGoodPass"
+#define SERVER_ADDRESS   "10.17.114.173"
 #define SERVER_PORT      8080
 #define AUTH_KEY         "e4d2c8f1a5b9d3c7b2e1f4a9d6e8b4c2"
 #define DEVICE_ID        "robot-01"
