@@ -13,6 +13,7 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
   supabase,
   latestSensorData,
   broadcastData,
+  processCellUpdate,
   AUTH_KEY,
 }) {
 
@@ -205,21 +206,8 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
     const { status, color } = cellStatus(avgTemp, avgHum, avgAir);
     console.log(`[Mission] ✅ Cell (${cell.index_x},${cell.index_y}) complete — temp=${avgTemp.toFixed(1)}°C hum=${avgHum}% air=${avgAir} → ${status}`);
 
-    // Update Supabase — store avg sensor readings alongside status
-    if (mission.hangarId) {
-      const { error } = await supabase
-        .from('cells')
-        .update({
-          status,
-          avg_temp:        avgTemp,
-          avg_humidity:    avgHum,
-          avg_air_quality: avgAir,
-          last_visited_at: new Date().toISOString(),
-        })
-        .match({ hangar_id: mission.hangarId, index_x: cell.index_x, index_y: cell.index_y });
-
-      if (error) console.error('[Mission] Cell update error:', JSON.stringify(error));
-    }
+    // Update Supabase with REAL averages calculated from all sensor data in this cell
+    await processCellUpdate(data);
 
     // Save sensor reading
     await supabase.from('sensor_data').insert([{
@@ -343,18 +331,32 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
         if (data.y           !== undefined) latestSensorData.latitude    = data.y;
         if (data.latitude    !== undefined) latestSensorData.latitude    = data.latitude;
         if (data.longitude   !== undefined) latestSensorData.longitude   = data.longitude;
+ 
+        // Print sensor values to terminal
+        console.log(`[Telemetry] Robot: ${data.device_id || '???'} | Temp: ${data.temperature}°C | Hum: ${data.humidity}% | Air: ${data.air_quality} | Pos: (${(data.x ?? data.longitude ?? 0).toFixed(1)}, ${(data.y ?? data.latitude ?? 0).toFixed(1)})`);
 
-        // Persist telemetry
-        const { error } = await supabase.from('sensor_data').insert([{
-          device_id:   data.device_id   || 'robot-01',
-          temperature: data.temperature ?? null,
-          humidity:    data.humidity    ?? null,
-          air_quality: data.air_quality ?? null,
-          air_digital: data.air_digital ?? null,
-          latitude:    data.latitude ?? data.y ?? null,
-          longitude:   data.longitude ?? data.x ?? null,
-        }]);
-        if (error) console.error('[WS] Supabase telemetry insert error:', JSON.stringify(error));
+        // Persist telemetry (Quietly, so missing Supabase doesn't spam logs with fetch errors)
+        try {
+          const { error } = await supabase.from('sensor_data').insert([{
+            device_id:   data.device_id   || 'robot-01',
+            temperature: data.temperature ?? null,
+            humidity:    data.humidity    ?? null,
+            air_quality: data.air_quality ?? null,
+            air_digital: data.air_digital ?? null,
+            latitude:    data.latitude ?? data.y ?? null,
+            longitude:   data.longitude ?? data.x ?? null,
+          }]);
+          if (error && !error.message.includes('getaddrinfo ENOTFOUND')) {
+             console.error('[WS] Supabase telemetry insert error:', JSON.stringify(error));
+          }
+        } catch (e) {
+          // Ignore connection errors during telemetry insert
+        }
+
+        // Live Grid Update: If we have position data, update the map squares in real-time
+        if (data.x !== undefined || data.y !== undefined || data.latitude !== undefined || data.longitude !== undefined) {
+          processCellUpdate(data);
+        }
 
         // Push live update to app
         broadcastData({

@@ -77,23 +77,74 @@ async function processCellUpdate(data) {
     if (lat === undefined || lon === undefined) return;
 
     const cellSize = 20; // Now in CM
-
-    // No multiplier needed if the data is already in CM
     const cellX = Math.floor(lon / cellSize);
     const cellY = Math.floor(lat / cellSize);
+
+    // Range for this cell
+    const minX = cellX * cellSize;
+    const maxX = (cellX + 1) * cellSize;
+    const minY = cellY * cellSize;
+    const maxY = (cellY + 1) * cellSize;
 
     const { data: hangar } = await supabase.from('hangars').select('id').limit(1).maybeSingle();
 
     if (hangar) {
+      // 1. Fetch all sensor data points recorded for this specific square/cell
+      const { data: points, error: pErr } = await supabase
+        .from('sensor_data')
+        .select('temperature, humidity, air_quality')
+        .gte('longitude', minX)
+        .lt('longitude', maxX)
+        .gte('latitude', minY)
+        .lt('latitude', maxY);
+
+      if (pErr) throw pErr;
+
+      // 2. Calculate the average if we have points
+      let avgTemp = 0, avgHum = 0, avgAir = 0, status = 'completed';
+      
+      if (points && points.length > 0) {
+        avgTemp = points.reduce((acc, p) => acc + (parseFloat(p.temperature) || 0), 0) / points.length;
+        avgHum  = points.reduce((acc, p) => acc + (parseFloat(p.humidity)    || 0), 0) / points.length;
+        avgAir  = points.reduce((acc, p) => acc + (parseFloat(p.air_quality) || 0), 0) / points.length;
+
+        // Determine status based on thresholds (Matching the frontend.js logic)
+        if (avgTemp >= 35 || avgHum >= 85 || avgAir > 3000) status = 'danger';
+        else if (avgTemp >= 28 || avgHum >= 70 || avgAir > 2000) status = 'warning';
+        else status = 'safe';
+      }
+
+      // 3. Update the cells table with the REAL averages
       const { error } = await supabase
         .from('cells')
-        .update({ status: 'completed', last_visited_at: new Date().toISOString() })
+        .update({ 
+          status, 
+          avg_temp: avgTemp,
+          avg_humidity: avgHum,
+          avg_air_quality: avgAir,
+          last_visited_at: new Date().toISOString() 
+        })
         .match({ hangar_id: hangar.id, index_x: cellX, index_y: cellY });
 
-      if (!error) console.log(`[Cell] Marked (${cellX}, ${cellY}) - Robot was at ${lon}cm, ${lat}cm`);
+      if (!error) {
+        console.log(`[Cell Update] Refreshed (${cellX}, ${cellY}) | Samples: ${points?.length || 0} | AvgTemp: ${avgTemp.toFixed(1)}°C | Status: ${status}`);
+        
+        // Notify the frontend so the map updates colors immediately
+        broadcastData({
+          type: 'cell_updated',
+          x: cellX,
+          y: cellY,
+          status,
+          avg_temp: avgTemp,
+          avg_humidity: avgHum,
+          avg_air_quality: avgAir
+        });
+      }
     }
   } catch (err) {
-    console.error('[Cell Error]', err);
+    if (err.message && !err.message.includes('getaddrinfo ENOTFOUND')) {
+      console.error('[Cell Error]', err);
+    }
   }
 }
 
@@ -120,10 +171,21 @@ server.listen(PORT, async () => {
 
   // Auto-clear any stuck active deployments from previous crash/restart
   // so the mobile app is never permanently locked out
-  const { error } = await supabase
-    .from('deployments')
-    .update({ status: 'completed', ended_at: new Date().toISOString() })
-    .eq('status', 'active');
-  if (!error) console.log('[Startup] ✅ Cleared any stuck active deployments.');
-  else console.warn('[Startup] ⚠️  Could not clear deployments:', error.message);
+  try {
+    const { error } = await supabase
+      .from('deployments')
+      .update({ status: 'completed', ended_at: new Date().toISOString() })
+      .eq('status', 'active');
+    
+    if (!error) {
+      console.log('[Startup] ✅ Cleared any stuck active deployments.');
+    } else {
+      console.warn('[Startup] ⚠️  Could not clear deployments:', error.message);
+      if (error.message.includes('getaddrinfo ENOTFOUND')) {
+        console.error('[Supabase] 🛑 PROJECT NOT FOUND: Your SUPABASE_URL is either wrong, or the project is PAUSED/DELETED.');
+      }
+    }
+  } catch (err) {
+    console.warn('[Startup] ⚠️  Supabase connection failed. Server will continue in Offline/Live-only mode.', err.message);
+  }
 });

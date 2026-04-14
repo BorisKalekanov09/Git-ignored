@@ -38,8 +38,11 @@ int   sampleCount           = 0;
 // ─────────────────────────────────────────────────────────────
 // Timers
 // ─────────────────────────────────────────────────────────────
+float worldX = 0.0f;
+float worldY = 0.0f;
 unsigned long telTimer = 0;
 unsigned long logTimer = 0;
+unsigned long moveTimer = 0;
 
 // ─────────────────────────────────────────────────────────────
 // WebSocket
@@ -53,6 +56,8 @@ void sendCellComplete() {
   int   digAir  = digitalRead(AIR_QUALITY_DO);
 
   String msg = "{\"type\":\"cell_complete\""
+               ",\"x_cm\":"        + String(worldX, 1) +
+               ",\"y_cm\":"        + String(worldY, 1) +
                ",\"temperature\":" + String(avgTemp, 2) +
                ",\"humidity\":"    + String(avgHum, 2)  +
                ",\"air_quality\":" + String(avgAir, 2)  +
@@ -66,10 +71,14 @@ void sendCellComplete() {
 
 void sendTelemetry() {
   String msg = "{\"device_id\":\""  + String(DEVICE_ID) + "\""
+             + ",\"x\":"            + String(worldX, 1)
+             + ",\"y\":"            + String(worldY, 1)
              + ",\"temperature\":"  + String(dht.readTemperature(), 1)
              + ",\"humidity\":"     + String(dht.readHumidity(), 1)
              + ",\"air_quality\":"  + String(analogRead(AIR_QUALITY_AO))
              + ",\"air_digital\":"  + String(digitalRead(AIR_QUALITY_DO))
+             + ",\"latitude\":"     + String(worldY, 4)
+             + ",\"longitude\":"    + String(worldX, 4)
              + ",\"state\":\""      + String(state == DRIVING  ? "driving"  :
                                              state == SAMPLING ? "sampling" :
                                              state == FAULT    ? "fault"    : "waiting") + "\""
@@ -88,6 +97,19 @@ void wsEvent(WStype_t type, uint8_t* p, size_t len) {
       motors(0, 0);
       state = WAITING;
       printBanner("MISSION ABORTED — WAITING");
+    }
+
+    if (payload.indexOf("\"type\":\"set_pos\"") >= 0) {
+      int xi = payload.indexOf("\"x_cm\":");
+      int yi = payload.indexOf("\"y_cm\":");
+      if (xi >= 0 && yi >= 0) {
+        worldX = payload.substring(xi + 7).toFloat();
+        worldY = payload.substring(yi + 7).toFloat();
+        Serial.print(F("[WS] Position synced to X:"));
+        Serial.print(worldX, 1);
+        Serial.print(F(" Y:"));
+        Serial.println(worldY, 1);
+      }
     }
   }
 }

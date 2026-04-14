@@ -26,6 +26,8 @@ module.exports = function setupArduinoRoutes(app, {
       latestSensorData.humidity    = parseFloat(data.humidity)    || 0;
       latestSensorData.latitude    = parseFloat(data.latitude)    || 0;
       latestSensorData.longitude   = parseFloat(data.longitude)   || 0;
+ 
+      console.log(`[HTTP] Sensor Data: Temp=${latestSensorData.temperature}°C, Hum=${latestSensorData.humidity}%, Lat=${latestSensorData.latitude}, Lon=${latestSensorData.longitude}`);
 
       // 3. Persist to Supabase
       const { error } = await supabase
