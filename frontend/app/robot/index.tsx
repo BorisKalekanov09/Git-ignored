@@ -132,6 +132,7 @@ export default function RobotScreen() {
   const deployStartRef = useRef<number | null>(null);
   const [summaryVisible, setSummaryVisible] = useState(false);
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null);
+  const [liveSensor, setLiveSensor] = useState<{ temp: number; hum: number; air: number } | null>(null);
 
   // Compute averages from visited cells (avg_* fields set by server after each cell_complete)
   const avgTemp = useMemo(() => {
@@ -263,16 +264,23 @@ export default function RobotScreen() {
     siloSocket.connect();
 
     const off = siloSocket.onSensorData((data: any) => {
-      // 1. Live Heat Map Points
+      // 1. Live Heat Map Points + live stat tracking
       if (data.type === 'sensor_data' || data.temperature !== undefined) {
+        // Update live readings for stat cards
+        const liveT = Number(data.temperature ?? data.temp);
+        const liveH = Number(data.humidity ?? data.moisture);
+        const liveA = Number(data.air_quality);
+        if (!isNaN(liveT) && liveT > 0) {
+          setLiveSensor({ temp: liveT, hum: liveH, air: liveA });
+        }
         const livePoint = toSurfacePoints([
           {
             id: _pointCounter++,
-            temperature: Number(data.temperature ?? data.temp) || 0,
-            humidity: Number(data.humidity ?? data.moisture) || 0,
+            temperature: liveT || 0,
+            humidity: liveH || 0,
             latitude: Number(data.latitude ?? data.y) || 0,
             longitude: Number(data.longitude ?? data.x) || 0,
-            air_quality: Number(data.air_quality) || 0,
+            air_quality: liveA || 0,
             air_digital: Number(data.air_digital) ?? 1,
             created_at: new Date().toISOString(),
           },
@@ -334,8 +342,32 @@ export default function RobotScreen() {
     return () => off();
   }, []);
 
-  const tempStatus = getTempStatus(avgTemp);
-  const airStatus = getAirStatus(avgAirQuality, 1);
+  const cellAvgTemp = useMemo(() => {
+    const visited = cells.filter(c => c.avg_temp != null && (c.avg_temp ?? 0) > 0);
+    if (!visited.length) return null;
+    return visited.reduce((s, c) => s + (c.avg_temp ?? 0), 0) / visited.length;
+  }, [cells]);
+
+  const cellAvgHum = useMemo(() => {
+    const visited = cells.filter(c => c.avg_humidity != null && (c.avg_humidity ?? 0) > 0);
+    if (!visited.length) return null;
+    return visited.reduce((s, c) => s + (c.avg_humidity ?? 0), 0) / visited.length;
+  }, [cells]);
+
+  const cellAvgAir = useMemo(() => {
+    const visited = cells.filter(c => c.avg_air_quality != null && (c.avg_air_quality ?? 0) > 0);
+    if (!visited.length) return null;
+    return visited.reduce((s, c) => s + (c.avg_air_quality ?? 0), 0) / visited.length;
+  }, [cells]);
+
+  // Use cell averages if available, otherwise fall back to live sensor reading
+  const displayTemp = cellAvgTemp ?? liveSensor?.temp ?? 0;
+  const displayHum  = cellAvgHum  ?? liveSensor?.hum  ?? 0;
+  const displayAir  = cellAvgAir  ?? liveSensor?.air  ?? 0;
+
+  const tempStatus = getTempStatus(displayTemp);
+  const airStatus = getAirStatus(displayAir, 1);
+  const isLiveOnly = cellAvgTemp === null;
 
   const handleDeploy = async () => {
     if (!hangar) return;
@@ -868,27 +900,27 @@ export default function RobotScreen() {
         {/* Stat cards */}
         <View style={styles.statRow}>
           <TouchableOpacity style={styles.statCard} activeOpacity={0.7} onPress={() => setTempDetailVisible(true)}>
-            <Text style={styles.statLabel}>Avg. Temp</Text>
+            <Text style={styles.statLabel}>{isLiveOnly ? 'Live Temp' : 'Avg. Temp'}</Text>
             <Text style={[styles.statValue, { color: tempStatus.color }]}>
-              {avgTemp > 0 ? avgTemp.toFixed(1) : '—'}°C
+              {displayTemp > 0 ? displayTemp.toFixed(1) : '—'}°C
             </Text>
             <Text style={[styles.statSub, { color: tempStatus.color }]}>
               {tempStatus.label} ›
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.statCard} activeOpacity={0.7} onPress={() => setHumDetailVisible(true)}>
-            <Text style={styles.statLabel}>Avg. Humidity</Text>
-            <Text style={[styles.statValue, { color: avgHumidity > 85 ? '#EA575F' : avgHumidity > 70 ? '#FFA500' : avgHumidity > 0 ? '#4CAF50' : '#8E8E93' }]}>
-              {avgHumidity > 0 ? avgHumidity.toFixed(0) : '—'}%
+            <Text style={styles.statLabel}>{isLiveOnly ? 'Live Humidity' : 'Avg. Humidity'}</Text>
+            <Text style={[styles.statValue, { color: displayHum > 85 ? '#EA575F' : displayHum > 70 ? '#FFA500' : displayHum > 0 ? '#4CAF50' : '#8E8E93' }]}>
+              {displayHum > 0 ? displayHum.toFixed(0) : '—'}%
             </Text>
-            <Text style={[styles.statSub, { color: avgHumidity > 85 ? '#EA575F' : avgHumidity > 70 ? '#FFA500' : avgHumidity > 0 ? '#4CAF50' : '#8E8E93' }]}>
-              {avgHumidity > 85 ? 'High ›' : avgHumidity > 70 ? 'Elevated ›' : avgHumidity > 0 ? 'Normal ›' : 'No data'}
+            <Text style={[styles.statSub, { color: displayHum > 85 ? '#EA575F' : displayHum > 70 ? '#FFA500' : displayHum > 0 ? '#4CAF50' : '#8E8E93' }]}>
+              {displayHum > 85 ? 'High ›' : displayHum > 70 ? 'Elevated ›' : displayHum > 0 ? 'Normal ›' : 'No data'}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.statCard} activeOpacity={0.7} onPress={() => setAqDetailVisible(true)}>
-            <Text style={styles.statLabel}>Air Quality</Text>
+            <Text style={styles.statLabel}>{isLiveOnly ? 'Live Air' : 'Air Quality'}</Text>
             <Text style={[styles.statValue, { color: airStatus.color }]}>
-              {avgAirQuality > 0 ? avgAirQuality.toFixed(0) : '—'}
+              {displayAir > 0 ? displayAir.toFixed(0) : '—'}
             </Text>
             <Text style={[styles.statSub, { color: airStatus.color }]}>
               {airStatus.label} ›

@@ -343,8 +343,8 @@ module.exports = function setupFrontendRoutes(app, wss, WebSocket, {
             humidity:    data.humidity    ?? null,
             air_quality: data.air_quality ?? null,
             air_digital: data.air_digital ?? null,
-            latitude:    data.latitude ?? data.y ?? null,
-            longitude:   data.longitude ?? data.x ?? null,
+            latitude:    data.latitude  ?? data.y  ?? latestSensorData.latitude  ?? 0,
+            longitude:   data.longitude ?? data.x  ?? latestSensorData.longitude ?? 0,
           }]);
           if (error && !error.message.includes('getaddrinfo ENOTFOUND')) {
              console.error('[WS] Supabase telemetry insert error:', JSON.stringify(error));

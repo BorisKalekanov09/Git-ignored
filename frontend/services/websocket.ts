@@ -82,7 +82,8 @@ export const siloSocket = {
 
     socket.onclose = () => {
       socket = null;
-      listeners = []; // clear stale listeners; components re-register via useEffect
+      // Do NOT clear listeners here — components register once and expect to
+      // keep receiving data even after the socket auto-reconnects.
       setTimeout(() => siloSocket.connect(), retryDelay);
       retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
     };
